@@ -255,3 +255,69 @@ def ensure_config_dir() -> Path:
     config_dir = _default_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
+
+
+def load_config_file(path: str) -> dict[str, object]:
+    """Load settings from a specific config file.
+
+    Args:
+        path: Path to a YAML or JSON config file.
+
+    Returns:
+        Merged settings dict, or empty dict on error.
+    """
+    config_path = Path(path)
+    if not config_path.exists():
+        return {}
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            raw = f.read()
+    except (OSError, PermissionError):
+        return {}
+
+    suffix = config_path.suffix.lower()
+    if suffix in (".yaml", ".yml"):
+        parsed = _parse_yaml(raw)
+    elif suffix == ".json":
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            return {}
+    else:
+        return {}
+
+    return _flatten_config(parsed)
+
+
+def load_settings_from_env() -> dict[str, object]:
+    """Load settings from environment variables.
+
+    Reads H3C_HCL_MCP__* vars and converts to nested dict.
+    """
+    result: dict[str, object] = {}
+    import os
+
+    for key, value in os.environ.items():
+        if not key.startswith("H3C_HCL_MCP__"):
+            continue
+        config_key = key[len("H3C_HCL_MCP__"):].lower()
+        result[config_key] = value
+    return result
+
+
+def _flatten_config(data: dict[str, object], prefix: str = "") -> dict[str, object]:
+    """Flatten nested config dict to a flat dict with underscore-separated keys.
+
+    {'hcl': {'projects_dirs': [...]}} → {'hcl_projects_dirs': [...]}
+    """
+    result: dict[str, object] = {}
+    for key, value in data.items():
+        flat_key = f"{prefix}_{key}" if prefix else key
+        if isinstance(value, dict) and not any(isinstance(v, (list, dict)) for v in value.values()):
+            # This is a settings group — flatten it
+            for sub_key, sub_value in value.items():
+                result[f"{key}_{sub_key}"] = sub_value
+        elif isinstance(value, dict):
+            result.update(_flatten_config(value, flat_key))
+        else:
+            result[flat_key] = value
+    return result
