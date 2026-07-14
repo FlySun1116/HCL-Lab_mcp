@@ -1,0 +1,7 @@
+[topology]
+device_count=not_a_number
+link_count=abc
+
+[device-1]
+name=S6850_1
+device_id=NaN

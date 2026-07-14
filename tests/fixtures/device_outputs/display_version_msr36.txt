@@ -1,0 +1,12 @@
+H3C Comware Platform Software
+Comware Software, Version 7.1.064, Release 0821P20
+Copyright (c) 2004-2023 New H3C Technologies Co., Ltd. All rights reserved.
+MSR36-20 uptime is 1 week, 5 days, 12 hours, 10 minutes
+Last reboot reason: Power on
+
+H3C MSR36-20
+MPU(M) Board
+Board ID: 0203B987654321
+2G Memory
+256M Flash
+

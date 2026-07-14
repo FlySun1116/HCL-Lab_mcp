@@ -1,0 +1,15 @@
+{
+  "name": "Mismatch Lab",
+  "id": "hcl_mismatch_001",
+  "version": "5.10.3",
+  "devices": [
+    {
+      "name": "S6850_1",
+      "id": 1,
+      "model": "S6850-56HF",
+      "category": "switch",
+      "version": "7.1.070",
+      "configPath": "DeviceConfig\\S6850_1.cfg"
+    }
+  ]
+}

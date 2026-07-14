@@ -1,18 +1,20 @@
 """Contract tests for domain models — verify schemas and immutability."""
 
 import pytest
-from datetime import datetime, timezone
 
-from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
-from h3c_hcl_mcp.domain.project import LabProject, DeviceRef, InterfaceRef, Link, Topology
-from h3c_hcl_mcp.domain.device import (
-    DeviceState, TransportType, DiscoverySource,
-    RuntimeEndpoint, DeviceRuntime,
-)
-from h3c_hcl_mcp.domain.command import CommandTarget, CommandRequest, CommandResult, CommandType
-from h3c_hcl_mcp.domain.result import ToolResult
-from h3c_hcl_mcp.domain.change import ChangePlan
 from h3c_hcl_mcp.domain.audit import AuditEvent
+from h3c_hcl_mcp.domain.change import ChangePlan
+from h3c_hcl_mcp.domain.command import CommandResult, CommandTarget
+from h3c_hcl_mcp.domain.device import (
+    DeviceRuntime,
+    DeviceState,
+    DiscoverySource,
+    RuntimeEndpoint,
+    TransportType,
+)
+from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
+from h3c_hcl_mcp.domain.project import DeviceRef, LabProject, Link, Topology
+from h3c_hcl_mcp.domain.result import ToolResult
 
 
 class TestErrorCodes:
@@ -40,7 +42,7 @@ class TestLabProject:
 
     def test_is_immutable(self):
         p = LabProject(project_id="proj-1", name="Test Lab", path="C:\\labs\\proj-1")
-        with pytest.raises(Exception):
+        with pytest.raises((TypeError, ValueError)):
             p.name = "Changed"  # type: ignore
 
 
@@ -79,8 +81,10 @@ class TestTopology:
 
     def test_get_links_for_device(self):
         link = Link(
-            local_device_id=1, local_interface="GE1/0/1",
-            remote_device_id=2, remote_interface="GE1/0/1",
+            local_device_id=1,
+            local_interface="GE1/0/1",
+            remote_device_id=2,
+            remote_interface="GE1/0/1",
         )
         topo = Topology(project_id="p1", links=[link])
         assert len(topo.get_links_for_device(1)) == 1
@@ -120,7 +124,8 @@ class TestDeviceRuntime:
             confidence=0.9,
         )
         rt = DeviceRuntime(
-            device_id=1, device_name="R1",
+            device_id=1,
+            device_name="R1",
             state=DeviceState.RUNNING,
             endpoints=[ep],
         )
@@ -128,15 +133,20 @@ class TestDeviceRuntime:
 
     def test_best_endpoint_preference(self):
         telnet_ep = RuntimeEndpoint(
-            transport=TransportType.CONSOLE_TELNET, port=30001,
-            source=DiscoverySource.PROBE, confidence=0.9,
+            transport=TransportType.CONSOLE_TELNET,
+            port=30001,
+            source=DiscoverySource.PROBE,
+            confidence=0.9,
         )
         ssh_ep = RuntimeEndpoint(
-            transport=TransportType.SSH, port=22,
-            source=DiscoverySource.CONFIG, confidence=1.0,
+            transport=TransportType.SSH,
+            port=22,
+            source=DiscoverySource.CONFIG,
+            confidence=1.0,
         )
         rt = DeviceRuntime(
-            device_id=1, device_name="R1",
+            device_id=1,
+            device_name="R1",
             state=DeviceState.RUNNING,
             endpoints=[telnet_ep, ssh_ep],
         )
@@ -207,7 +217,7 @@ class TestChangePlan:
             operations=["cmd"],
             baseline_hash="abc",
         )
-        with pytest.raises(Exception):
+        with pytest.raises((TypeError, ValueError)):
             plan.plan_id = "changed"  # type: ignore
 
 

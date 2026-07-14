@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class DeviceState(str, Enum):
+class DeviceState(StrEnum):
     """Runtime state of an HCL device."""
 
     UNKNOWN = "unknown"
@@ -18,7 +18,7 @@ class DeviceState(str, Enum):
     PAUSED = "paused"
 
 
-class TransportType(str, Enum):
+class TransportType(StrEnum):
     """Supported device transport channels."""
 
     CONSOLE_TELNET = "console_telnet"
@@ -26,7 +26,7 @@ class TransportType(str, Enum):
     NETCONF = "netconf"
 
 
-class DiscoverySource(str, Enum):
+class DiscoverySource(StrEnum):
     """Source of a runtime endpoint discovery."""
 
     CONFIG = "config"

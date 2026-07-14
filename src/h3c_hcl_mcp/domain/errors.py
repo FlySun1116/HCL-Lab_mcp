@@ -5,11 +5,11 @@ Adapters convert third-party exceptions into these errors.
 The MCP layer maps these to structured tool results.
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     """Machine-readable error codes — stable across versions."""
 
     # ---- Project & Discovery ----

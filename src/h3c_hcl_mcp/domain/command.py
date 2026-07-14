@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class CommandType(str, Enum):
+class CommandType(StrEnum):
     """Classification of a CLI command."""
 
     DISPLAY = "display"

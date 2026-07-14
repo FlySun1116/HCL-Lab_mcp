@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,13 +20,13 @@ class ChangePlan(BaseModel):
     diff: str = Field(default="", description="Human-readable config diff")
     risk_level: str = Field(default="low", description="Risk assessment: low, medium, high")
     baseline_hash: str = Field(description="SHA-256 of running-config before change")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc) + timedelta(seconds=300),
+        default_factory=lambda: datetime.now(UTC) + timedelta(seconds=300),
         description="Plan expiry time",
     )
     approval_token: str | None = Field(default=None, description="Consumed approval token")
 
     @property
     def is_expired(self) -> bool:
-        return datetime.now(timezone.utc) > self.expires_at
+        return datetime.now(UTC) > self.expires_at

@@ -96,12 +96,16 @@ class Topology(BaseModel):
         return None
 
     def get_links_for_device(self, device_id: int) -> list[Link]:
-        return [l for l in self.links if l.local_device_id == device_id or l.remote_device_id == device_id]
+        return [
+            link
+            for link in self.links
+            if link.local_device_id == device_id or link.remote_device_id == device_id
+        ]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "project_id": self.project_id,
             "devices": [d.model_dump() for d in self.devices],
-            "links": [l.model_dump() for l in self.links],
+            "links": [link.model_dump() for link in self.links],
             "warnings": self.warnings,
         }

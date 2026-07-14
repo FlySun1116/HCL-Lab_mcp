@@ -5,16 +5,15 @@ import inspect
 
 import pytest
 
-from h3c_hcl_mcp.ports.project_repository import ProjectRepository
-from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
-from h3c_hcl_mcp.ports.device_transport import DeviceTransport
-from h3c_hcl_mcp.ports.command_parser import CommandParser
-from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
 from h3c_hcl_mcp.ports.approval_provider import ApprovalProvider
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
+from h3c_hcl_mcp.ports.command_parser import CommandParser
+from h3c_hcl_mcp.ports.device_transport import DeviceTransport
 from h3c_hcl_mcp.ports.job_store import JobStore
+from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
+from h3c_hcl_mcp.ports.project_repository import ProjectRepository
+from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
 from h3c_hcl_mcp.ports.secret_provider import SecretProvider
-
 
 ALL_PORTS = [
     ProjectRepository,

@@ -1,0 +1,23 @@
+{
+  "name": "Sample Lab",
+  "id": "hcl_sample_001",
+  "version": "5.10.3",
+  "devices": [
+    {
+      "name": "S6850_1",
+      "id": 1,
+      "model": "S6850-56HF",
+      "category": "switch",
+      "version": "7.1.070",
+      "configPath": "DeviceConfig\\S6850_1.cfg"
+    },
+    {
+      "name": "MSR36_1",
+      "id": 2,
+      "model": "MSR36-20",
+      "category": "router",
+      "version": "7.1.064",
+      "configPath": "DeviceConfig\\MSR36_1.cfg"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+Brief information on interfaces in route mode:
+Interface            Link   Speed      Description
+GE1/0/1              UP     1G         Uplink to Core
+GE1/0/2              UP     1G         Link to Access-SW1
+GE1/0/3              DOWN   auto
+GE1/0/4              UP     10G        Server Farm Link
+XGE1/0/1             UP     10G        Uplink to Distribution
+XGE1/0/2             DOWN   auto
+LoopBack0            UP     -          Management Loopback
+LoopBack1            DOWN   -          Backup Loopback

@@ -1,0 +1,12 @@
+H3C Comware Platform Software
+Comware Software, Version 7.1.070, Release 6616
+Copyright (c) 2004-2023 New H3C Technologies Co., Ltd. All rights reserved.
+S6850 uptime is 2 weeks, 3 days, 4 hours, 35 minutes
+Last reboot reason: User reboot
+
+H3C S6850
+MPU(M) Board
+Board ID: 0203A123456789
+3G Memory
+4M Flash
+
