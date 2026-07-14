@@ -50,7 +50,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             pass
         return f"device_{device_id}"
 
-    async def _resolve_runtime_endpoint(project_id: str, device_id: int):
+    async def _resolve_runtime_endpoint(project_id: str, device_id: int) -> Any:
         """Resolve the runtime endpoint for a device.
 
         Returns (device_runtime, device_name).

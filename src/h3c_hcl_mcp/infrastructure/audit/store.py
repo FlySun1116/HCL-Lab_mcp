@@ -30,9 +30,9 @@ class SQLiteAuditStore(AuditSink):
     """
 
     def __init__(self, db_path: str | None = None) -> None:
-        if db_path is None:
-            import sys
+        import sys
 
+        if db_path is None:
             if sys.platform == "win32":
                 base = Path(
                     __import__("os").environ.get(
@@ -48,18 +48,15 @@ class SQLiteAuditStore(AuditSink):
                     )
                 )
             db_dir = base / "h3c-hcl-mcp"
-        else:
+            db_file = db_dir / "audit.db"
+        elif db_path.endswith(".db"):
             db_dir = Path(db_path).parent
-            if db_dir.name.endswith(".db"):
-                db_dir = Path(db_path)
+            db_file = Path(db_path)
+        else:
+            db_dir = Path(db_path)
+            db_file = db_dir / "audit.db"
 
         db_dir.mkdir(parents=True, exist_ok=True)
-        db_file = db_dir if not str(db_path).endswith(".db") else Path(db_path)
-        if not str(db_path).endswith(".db") if db_path else True:
-            db_file = db_dir / "audit.db"
-        else:
-            db_file = Path(db_path)
-
         self._db_path = str(db_file)
         self._lock = threading.Lock()
         self._init_db()
@@ -199,7 +196,7 @@ class SQLiteAuditStore(AuditSink):
 
         events: list[AuditEvent] = []
         for row in rows:
-            target_dict: dict | None = None
+            target_dict: dict[str, object] | None = None
             if row["target"]:
                 try:
                     target_dict = json.loads(row["target"])

@@ -2,7 +2,9 @@
 
 ## 当前版本
 
-**v0.0.1** — Repository Bootstrap (Phase 0)
+**v0.1.0-alpha.1** — Read-Only Vertical Slice
+
+Previous: v0.0.1 (Repository Bootstrap)
 
 Branch: `main`
 Date: 2026-07-15

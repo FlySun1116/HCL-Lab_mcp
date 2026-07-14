@@ -9,6 +9,7 @@ routes connect/execute/close to the right per-device session underneath.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from h3c_hcl_mcp.adapters.comware.console_telnet import ConsoleTelnetTransport
@@ -73,10 +74,8 @@ class DeviceSessionManager:
     async def close_all(self) -> None:
         """Close all sessions and transports."""
         for transport in list(self._transports.values()):
-            try:
+            with contextlib.suppress(Exception):
                 await transport.close()
-            except Exception:
-                pass
         self._transports.clear()
         self._sessions.clear()
 

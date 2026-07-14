@@ -16,7 +16,7 @@ class AuditEvent(BaseModel):
     request_id: str = Field(description="Correlated MCP request ID")
     caller: str = Field(default="unknown", description="Caller identity")
     tool: str = Field(description="MCP tool name")
-    target: dict | None = Field(default=None, description="Target descriptor")
+    target: dict[str, object] | None = Field(default=None, description="Target descriptor")
     policy_result: str = Field(default="allowed", description="Policy decision")
     change_summary: str | None = Field(default=None, description="Summary of state changes")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -111,7 +111,7 @@ class DeviceLockManager:
         """
         to_remove = []
         for key, lock in self._locks.items():
-            if not lock.locked() and not lock._waiters:  # type: ignore[attr-defined]
+            if not lock.locked() and not lock._waiters:
                 to_remove.append(key)
 
         for key in to_remove:

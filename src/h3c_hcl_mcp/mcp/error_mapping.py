@@ -63,13 +63,16 @@ def handle_errors[**P, R](
                         If the function has no such arg, a UUID is generated.
     """
 
-    def decorator(func: Callable[P, R]) -> Callable[P, R]:
+    def decorator(func: Callable[P, R]) -> Callable[P, Any]:
         @wraps(func)
         async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> Any:
             try:
-                return await func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    return await result
+                return result
             except DomainError as e:
-                rid = kwargs.get(request_id_arg, str(uuid.uuid4()))
+                rid = str(kwargs.get(request_id_arg, str(uuid.uuid4())))
                 return map_domain_error(e, rid)
 
         @wraps(func)
@@ -77,14 +80,14 @@ def handle_errors[**P, R](
             try:
                 return func(*args, **kwargs)
             except DomainError as e:
-                rid = kwargs.get(request_id_arg, str(uuid.uuid4()))
+                rid = str(kwargs.get(request_id_arg, str(uuid.uuid4())))
                 return map_domain_error(e, rid)
 
         import asyncio
 
         if asyncio.iscoroutinefunction(func):
-            return async_wrapper  # type: ignore[return-value]
-        return sync_wrapper  # type: ignore[return-value]
+            return async_wrapper
+        return sync_wrapper
 
     if fn is not None:
         return decorator(fn)

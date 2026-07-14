@@ -31,6 +31,7 @@ def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
 
     handler = logging.StreamHandler(sys.stderr)
 
+    formatter: logging.Formatter
     if format_json:
         formatter = _JSONFormatter()
     else:

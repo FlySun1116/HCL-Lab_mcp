@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "h3c-hcl": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "h3c-hcl-mcp==0.1.0",
+        "h3c-hcl-mcp",
+        "--config",
+        "C:\\Users\\YOUR_USERNAME\\.config\\h3c-hcl-mcp\\config.yaml"
+      ]
+    }
+  }
+}

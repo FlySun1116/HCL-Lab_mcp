@@ -77,7 +77,7 @@ _PORT_RELEASED_PATTERN = re.compile(
     r"Console port\s+(?P<port>\d+)\s+released from device\s+(?P<id>\d+)"
 )
 
-_PATTERNS: list[tuple[re.Pattern, LogEventType]] = [
+_PATTERNS: list[tuple[re.Pattern[str], LogEventType]] = [
     (_STARTED_PATTERN, LogEventType.DEVICE_STARTED),
     (_STOPPED_PATTERN, LogEventType.DEVICE_STOPPED),
     (_PORT_ALLOCATED_PATTERN, LogEventType.CONSOLE_PORT_ALLOCATED),

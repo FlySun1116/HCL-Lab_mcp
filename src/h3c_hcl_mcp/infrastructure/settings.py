@@ -168,7 +168,8 @@ def _load_config_file(config_path: str | None = None) -> dict[str, Any]:
         if suffix in (".yaml", ".yml"):
             return _parse_yaml(raw)
         elif suffix == ".json":
-            return json.loads(raw)
+            result: dict[str, Any] = json.loads(raw)
+            return result
 
     return {}
 

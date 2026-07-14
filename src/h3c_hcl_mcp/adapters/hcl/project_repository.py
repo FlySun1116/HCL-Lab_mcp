@@ -29,7 +29,7 @@ def _validate_project_path(project_dir: str) -> None:
         )
 
 
-def _read_project_json(project_dir: str) -> dict:
+def _read_project_json(project_dir: str) -> dict[str, object]:
     """Read and parse project.json from a project directory.
 
     Raises:
@@ -212,8 +212,9 @@ class HCLProjectRepository(ProjectRepository):
             if json_id != project_id:
                 continue
 
-            name = data.get("name", project_id)
-            hcl_version = data.get("version")
+            name = str(data.get("name", project_id))
+            hcl_version_raw = data.get("version")
+            hcl_version = str(hcl_version_raw) if hcl_version_raw is not None else None
             devices = data.get("devices", [])
             device_count = len(devices) if isinstance(devices, list) else 0
 

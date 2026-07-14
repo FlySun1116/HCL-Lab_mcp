@@ -51,7 +51,7 @@ class CommandResult(BaseModel):
     target: CommandTarget = Field(description="Target device")
     command: str = Field(description="The command that was executed")
     raw_output: str = Field(default="", description="Raw device output")
-    parsed_data: dict | None = Field(default=None, description="Structured parsed data if available")
+    parsed_data: dict[str, object] | None = Field(default=None, description="Structured parsed data if available")
     prompt_detected: str | None = Field(default=None, description="Device prompt after command")
     duration_ms: float = Field(default=0.0, description="Execution duration in milliseconds")
     truncated: bool = Field(default=False, description="Whether output was truncated")
