@@ -5,6 +5,35 @@ All notable changes to h3c-hcl-mcp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.1] — 2026-07-15
+
+### Fixed — Bugfix from TEST_REPORT_v0.1.md
+
+**P0 Blockers:**
+- BUG-001: Unified version to `0.1.0-beta.1` across pyproject.toml, __init__.py, server.py, health.py, __main__.py via single `version.py` source
+- BUG-002: Real HCL 5.10.3 project.json format now supported (`projectInfo`/`deviceInfoList` schema) via `_normalize_project_json()`
+- BUG-003: Basic HCL process detection (`_is_hcl_running()`) with SimwareClient/SimwareMultiCC process inspection
+
+**P1 Important:**
+- BUG-004: Implemented `--config` CLI argument with argparse; unknown args rejected with exit code 2
+- BUG-005: Tool name migration map documented in README (5 alias names → canonical namespaced names)
+- BUG-006: Removed 4 v0.2 placeholder tools from registration; `h3c_diff_config` returns NOT_IMPLEMENTED error
+- BUG-007: Fixed ErrorCode references (3 sites in h3c_read.py now use `ErrorCode.DEVICE_NOT_RUNNING`, etc.)
+- BUG-008: Business errors now raise `ToolError` → MCP `isError=true` with structured JSON error payload
+- BUG-009: Audit middleware (`audit_middleware.py`) wraps all 15 tools; success/error/internal paths recorded
+- BUG-010: `serverInfo.version` set via `mcp._mcp_server.version`; single source in `version.py`
+
+**P2 Minor:**
+- BUG-011: README dev instructions updated (`uv sync --extra dev`)
+- BUG-012: Ruff lint/format clean (1 E501 fixed, 3 files reformatted)
+- BUG-013: Em dash replaced with ASCII `--` in stderr startup messages
+
+### Changed
+- Version: `0.0.1` → `0.1.0-beta.1`
+- MCP tools: 19 → 15 (4 v0.2 placeholder tools hidden)
+- Error mapping: returns → raises `ToolError` (MCP `isError=true`)
+- v0.2 change tools removed from `tools/list`
+
 ## [0.0.1] — 2026-07-15
 
 ### Added — v0.0.1 (Repository Bootstrap)
