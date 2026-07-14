@@ -6,6 +6,7 @@ Implements the ProjectRepository port using filesystem scanning and JSON/configp
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import UTC, datetime
 
@@ -13,6 +14,8 @@ from h3c_hcl_mcp.adapters.hcl.net_parser import parse_net_file
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.project import DeviceRef, LabProject, Link, Topology
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_project_path(project_dir: str) -> None:
@@ -207,8 +210,9 @@ class HCLProjectRepository(ProjectRepository):
                     try:
                         project = await self.get_project(entry.name)
                         all_projects.append(project)
-                    except DomainError:
-                        # Skip directories that don't contain valid HCL projects
+                    except DomainError as e:
+                        # Collect skipped project info for diagnostics
+                        logger.debug("Skipping %s: %s", entry.name, e.message)
                         continue
             except OSError:
                 continue

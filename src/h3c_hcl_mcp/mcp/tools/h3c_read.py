@@ -9,9 +9,10 @@ from __future__ import annotations
 import contextlib
 import time
 import uuid
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from h3c_hcl_mcp.domain.command import CommandRequest, CommandTarget, CommandType
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
@@ -224,7 +225,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         project_id: str,
         device_id: int,
         command: str,
-        timeout: int = 20,
+        timeout: Annotated[int, Field(ge=1, le=120, description="Command timeout in seconds")] = 20,
     ) -> ToolResult:
         """Execute a read-only display command on an H3C device.
 
@@ -282,7 +283,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
     async def h3c_get_config(
         project_id: str,
         device_id: int,
-        source: str = "running",
+        source: Literal["running", "startup"] = "running",
         redact: bool = True,
     ) -> ToolResult:
         """Retrieve device configuration.
@@ -404,7 +405,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         project_id: str,
         device_id: int,
         destination: str,
-        count: int = 5,
+        count: Annotated[int, Field(ge=1, le=100, description="Number of ping packets")] = 5,
     ) -> ToolResult:
         """Ping a destination from an H3C device.
 
@@ -462,7 +463,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         project_id: str,
         device_id: int,
         destination: str,
-        max_hops: int = 30,
+        max_hops: Annotated[int, Field(ge=1, le=255, description="Maximum number of hops")] = 30,
     ) -> ToolResult:
         """Trace route to a destination from an H3C device.
 

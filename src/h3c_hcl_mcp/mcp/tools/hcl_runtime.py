@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from h3c_hcl_mcp.domain.errors import DomainError
 from h3c_hcl_mcp.domain.result import ToolResult
 from h3c_hcl_mcp.mcp.error_mapping import internal_error, map_domain_error
+from h3c_hcl_mcp.ports.project_repository import ProjectRepository
 from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
 
 
@@ -21,6 +22,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         mcp: The FastMCP server instance.
         **deps: Port implementations injected by the Composition Root.
     """
+    project_repo: ProjectRepository = deps["project_repository"]
     runtime_disc: RuntimeDiscovery = deps["runtime_discovery"]
 
     @mcp.tool(
@@ -41,6 +43,8 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         start = time.monotonic()
 
         try:
+            # Validate project exists before checking runtime
+            await project_repo.get_project(project_id)
             runtimes = await runtime_disc.discover_project(project_id)
 
             devices_data = []

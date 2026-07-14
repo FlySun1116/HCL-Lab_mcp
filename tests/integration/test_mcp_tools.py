@@ -57,10 +57,12 @@ class TestHCLProjects:
 
 
 class TestHCLRuntime:
-    def test_empty_runtime(self, server):
-        _, data = _call(server, "hcl_get_runtime", {"project_id": "nonexistent"})
-        assert data["ok"] is True
-        assert data["data"]["devices"] == []
+    def test_nonexistent_project(self, server):
+        """hcl_get_runtime should raise ToolError for nonexistent projects."""
+        with pytest.raises(ToolError) as exc:
+            _call(server, "hcl_get_runtime", {"project_id": "nonexistent"})
+        error_data = _get_tool_error_json(exc.value)
+        assert error_data["error"]["code"] == "PROJECT_NOT_FOUND"
 
 
 class TestH3CDevices:
