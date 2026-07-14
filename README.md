@@ -108,18 +108,18 @@ mcp → application → ports ← adapters/infrastructure
 
 See [docs/design.md](docs/design.md) for module boundaries, port interfaces, and tool schemas.
 
-## MCP Tools (v0.1 — Planned)
+## MCP Tools (v0.1)
 
-| Tool | Description |
-|---|---|
-| `server_health` | Server version, config status, health checks |
-| `hcl_list_projects` | List local HCL projects |
-| `hcl_get_topology` | Devices, interfaces, links |
-| `hcl_get_runtime` | HCL process status, device runtime, console availability |
-| `h3c_list_devices` | Operable devices with transport capabilities |
-| `h3c_get_facts` | sysname, Comware version, uptime, model |
-| `h3c_run_display` | Execute whitelisted `display` commands |
-| `h3c_get_config` | Running/startup/snapshot config (redacted) |
+| Tool | Status | Description |
+|---|---|---|
+| `server_health` | ✅ Ready | Server version, config status, health checks |
+| `hcl_list_projects` | ✅ Ready | List local HCL projects |
+| `hcl_get_topology` | ✅ Ready | Devices, interfaces, links |
+| `hcl_get_runtime` | ✅ Ready | HCL process status, device runtime, console availability |
+| `h3c_list_devices` | ✅ Ready | Operable devices with transport capabilities |
+| `h3c_get_facts` | ✅ Ready | sysname, Comware version, uptime, model |
+| `h3c_run_display` | ✅ Ready | Execute whitelisted `display` commands |
+| `h3c_get_config` | ✅ Ready | Running/startup/snapshot config (redacted) |
 | `h3c_get_interfaces` | Interface status, speed, description, addresses |
 | `h3c_ping` | Network reachability test |
 | `h3c_trace_route` | Path tracing |
@@ -142,16 +142,19 @@ See [SECURITY.md](SECURITY.md) for the full security model.
 git clone https://github.com/FlySun1116/HCL-Lab_mcp.git
 cd HCL-Lab_mcp
 
-# Install dev dependencies
-uv pip install -e ".[dev]"
+# Create venv and install dev dependencies
+uv sync --extra dev
 
 # Lint & typecheck
-ruff check src/ tests/
-ruff format --check src/ tests/
-mypy src/
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src/
 
 # Run tests
-pytest
+uv run pytest
+
+# Build
+uv build
 
 # Run MCP Inspector
 npx @modelcontextprotocol/inspector uv run h3c-hcl-mcp

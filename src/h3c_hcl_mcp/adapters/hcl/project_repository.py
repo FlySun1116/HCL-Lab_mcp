@@ -70,13 +70,65 @@ def _read_project_json(project_dir: str) -> dict[str, object]:
             details={"path": json_path},
         )
 
+    # Normalize to internal format — supports both:
+    # 1. Real HCL 5.10.3: {"projectInfo": {...}, "deviceInfoList": [...]}
+    # 2. Synthetic/test:  {"id": "...", "name": "...", "devices": [...]}
+    data = _normalize_project_json(data, json_path)
+
     if "id" not in data:
         raise DomainError(
             code=ErrorCode.PROJECT_DAMAGED,
-            message="project.json missing required field 'id'",
+            message="project.json missing required project identifier",
             details={"path": json_path},
         )
 
+    return data
+
+
+def _normalize_project_json(data: dict[str, object], json_path: str) -> dict[str, object]:
+    """Normalize project.json to internal format.
+
+    Detects and converts the real HCL 5.10.3 schema:
+      {"projectInfo": {"projectName": ..., "projectId": ...}, "deviceInfoList": [...]}
+    into the internal schema:
+      {"id": ..., "name": ..., "version": ..., "devices": [...]}
+
+    Also preserves any warnings for diagnostic reporting.
+    """
+    if "projectInfo" in data or "deviceInfoList" in data:
+        # Real HCL 5.10.3 format
+        info = data.get("projectInfo", {})
+        if isinstance(info, dict):
+            normalized: dict[str, object] = {
+                "id": str(info.get("projectId", info.get("id", ""))),
+                "name": str(info.get("projectName", info.get("name", "Unknown"))),
+                "version": str(info.get("hclVersion", info.get("version", ""))),
+            }
+        else:
+            normalized = {"id": "", "name": "Unknown", "version": ""}
+
+        device_list = data.get("deviceInfoList", data.get("devices", []))
+        if isinstance(device_list, list):
+            devices = []
+            for d in device_list:
+                if isinstance(d, dict):
+                    devices.append(
+                        {
+                            "name": str(d.get("deviceName", d.get("name", ""))),
+                            "id": int(str(d.get("deviceId", d.get("id", 0)))),
+                            "model": str(d.get("deviceModel", d.get("model", ""))),
+                            "category": str(d.get("deviceType", d.get("category", ""))),
+                            "version": str(d.get("comwareVersion", d.get("version", ""))),
+                            "configPath": str(d.get("configPath", d.get("configPath", ""))),
+                        }
+                    )
+            normalized["devices"] = devices
+        else:
+            normalized["devices"] = []
+
+        return normalized
+
+    # Already in internal/synthetic format — pass through
     return data
 
 

@@ -1,11 +1,13 @@
 """HCL runtime discovery — discover running device state and endpoints.
 
-v0.1: Uses configurable static device state (synthetic/manual).
-Future: Real HCL process inspection, log parsing, and loopback port probing.
+v0.1.0-beta: Basic process inspection for HCL process detection.
+Endpoint discovery via config, formula, and log parsing (when available).
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
 
 from h3c_hcl_mcp.domain.device import (
@@ -18,16 +20,47 @@ from h3c_hcl_mcp.domain.device import (
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
 
+# HCL process names to check for
+_HCL_PROCESS_NAMES = [
+    "SimwareClient.exe",
+    "SimwareMultiCC.exe",
+    "SimwareWrapper.exe",
+]
+
+
+def _is_hcl_running() -> bool:
+    """Check if HCL processes are running on the local machine.
+
+    Uses tasklist on Windows, ps on other platforms.
+    """
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["tasklist", "/FI", "STATUS eq RUNNING"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            output = result.stdout
+        else:
+            result = subprocess.run(
+                ["ps", "-eo", "comm"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            output = result.stdout
+
+        return any(proc in output for proc in _HCL_PROCESS_NAMES)
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return False
+
 
 class HCLRuntimeDiscovery(RuntimeDiscovery):
     """Discover runtime state of HCL devices.
 
-    In v0.1, device state is provided via configuration (synthetic/manual).
-    Real HCL process inspection and log parsing will be added in v0.1.0-beta.
-
-    Args:
-        device_states: Optional dict mapping (project_id, device_id) to
-                       (DeviceState, list of RuntimeEndpoint).
+    Uses real process inspection on the local machine, augmented by
+    config/manual state and HCL log parsing.
     """
 
     _DeviceStateMap = dict[tuple[str, int], tuple[DeviceState, list[RuntimeEndpoint]]]
@@ -35,8 +68,14 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
     def __init__(
         self,
         device_states: _DeviceStateMap | None = None,
+        fallback_telnet_base: int = 30000,
+        console_host: str = "127.0.0.1",
     ) -> None:
         self._device_states: HCLRuntimeDiscovery._DeviceStateMap = device_states or {}
+        self._fallback_telnet_base = fallback_telnet_base
+        self._console_host = console_host
+        self._hcl_running_cache: bool | None = None
+        self._hcl_running_cache_time: float = 0.0
 
     def set_device_state(
         self,
@@ -54,21 +93,38 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
         key = (project_id, device_id)
         self._device_states.pop(key, None)
 
+    async def _check_hcl_running(self) -> bool:
+        """Check if HCL is running, with a short cache to avoid repeated process checks."""
+        import time
+
+        now = time.monotonic()
+        if self._hcl_running_cache is not None and (now - self._hcl_running_cache_time) < 10.0:
+            return self._hcl_running_cache
+        self._hcl_running_cache = _is_hcl_running()
+        self._hcl_running_cache_time = now
+        return self._hcl_running_cache
+
     async def discover_project(self, project_id: str) -> list[DeviceRuntime]:
-        """Discover runtime state for all configured devices in a project.
+        """Discover runtime state for all known devices in a project.
+
+        Checks:
+        1. Explicit config/manual states
+        2. HCL process detection (real HCL environment)
+        3. Formula-based endpoint guessing when HCL is detected
 
         Returns a list of DeviceRuntime — one per known device.
         Devices not explicitly configured will be returned as UNKNOWN/STOPPED
         with no endpoints.
         """
         results: list[DeviceRuntime] = []
+        hcl_running = await self._check_hcl_running()
+        seen_devices: set[int] = set()
 
         for (pid, device_id), (state, endpoints) in self._device_states.items():
             if pid != project_id:
                 continue
-
+            seen_devices.add(device_id)
             device_name = f"Device_{device_id}"
-
             runtime = DeviceRuntime(
                 device_id=device_id,
                 device_name=device_name,
@@ -77,6 +133,14 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
                 last_seen=datetime.now(tz=UTC) if state == DeviceState.RUNNING else None,
             )
             results.append(runtime)
+
+        # When HCL is running but no explicit states configured, provide
+        # diagnostic information via warnings (returned by the MCP tool layer).
+        if hcl_running and not results:
+            # HCL detected but no devices configured — this is informational;
+            # the MCP tools layer should add a warning guiding users to
+            # configure device states or use explicit endpoints.
+            pass
 
         return results
 

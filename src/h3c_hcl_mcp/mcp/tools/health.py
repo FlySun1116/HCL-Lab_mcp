@@ -14,8 +14,7 @@ from h3c_hcl_mcp.domain.errors import DomainError
 from h3c_hcl_mcp.domain.result import ToolResult
 from h3c_hcl_mcp.mcp.error_mapping import internal_error, map_domain_error
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
-
-VERSION = "0.0.1"
+from h3c_hcl_mcp.version import VERSION
 
 
 def register(mcp: FastMCP, **deps: Any) -> None:

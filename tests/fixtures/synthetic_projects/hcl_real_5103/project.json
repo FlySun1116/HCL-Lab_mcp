@@ -1,0 +1,30 @@
+{
+  "projectInfo": {
+    "projectName": "Test Lab 5103",
+    "projectId": "hcl_real_5103",
+    "hclVersion": "5.10.3",
+    "createdTime": "2026-01-15T10:30:00"
+  },
+  "deviceInfoList": [
+    {
+      "deviceName": "S6850_1",
+      "deviceId": 1,
+      "deviceType": "switch",
+      "deviceModel": "S6850-56HF",
+      "comwareVersion": "7.1.070",
+      "configPath": "DeviceConfig\\S6850_1.cfg",
+      "memory": 2048,
+      "slotCount": 1
+    },
+    {
+      "deviceName": "MSR36_1",
+      "deviceId": 2,
+      "deviceType": "router",
+      "deviceModel": "MSR36-20",
+      "comwareVersion": "7.1.064",
+      "configPath": "DeviceConfig\\MSR36_1.cfg",
+      "memory": 1024,
+      "slotCount": 2
+    }
+  ]
+}

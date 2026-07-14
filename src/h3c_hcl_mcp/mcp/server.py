@@ -33,7 +33,6 @@ from h3c_hcl_mcp.infrastructure.secrets import SecretProviderImpl
 from h3c_hcl_mcp.infrastructure.settings import PolicySettings
 from h3c_hcl_mcp.mcp.tools import (
     audit,
-    h3c_change,
     h3c_read,
     hcl_projects,
     hcl_runtime,
@@ -49,10 +48,10 @@ from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
 from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
 from h3c_hcl_mcp.ports.secret_provider import SecretProvider
+from h3c_hcl_mcp.version import VERSION
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.0.1"
 SERVER_NAME = "h3c-hcl-mcp"
 
 
@@ -152,12 +151,33 @@ class _PlaceholderJobStore(JobStore):
 
 
 # ---------------------------------------------------------------------------
+# Audit middleware wiring
+# ---------------------------------------------------------------------------
+
+
+def _wrap_tools_with_audit(mcp: FastMCP, audit_sink: AuditSink) -> None:
+    """Wrap all registered tool functions with audit recording.
+
+    After this call, every tool invocation will be recorded to the audit sink.
+    """
+    from h3c_hcl_mcp.mcp.audit_middleware import with_audit
+
+    wrapped = 0
+    for tool_name, tool in mcp._tool_manager._tools.items():
+        if hasattr(tool, "fn"):
+            tool.fn = with_audit(tool_name, audit_sink)(tool.fn)
+            wrapped += 1
+    logger.info("Audit middleware wrapped %d tools.", wrapped)
+
+
+# ---------------------------------------------------------------------------
 # Server factory
 # ---------------------------------------------------------------------------
 
 
 def create_server(
     hcl_projects_dirs: list[str] | None = None,
+    config_path: str | None = None,
 ) -> FastMCP:
     """Create and configure the h3c-hcl-mcp FastMCP server.
 
@@ -171,16 +191,38 @@ def create_server(
 
     Args:
         hcl_projects_dirs: Directories to scan for HCL projects.
-                           Defaults to H3C_CLOUD_LAB_PROJECTS env var or empty list.
+        config_path: Optional path to YAML/JSON config file.
 
     Returns:
         A fully configured FastMCP server ready to start via stdio.
     """
     import os
 
+    # Load configuration (CLI > env > config file > defaults)
+    settings: dict[str, object] | None = None
+    if config_path:
+        from h3c_hcl_mcp.infrastructure.settings import load_config_file
+
+        settings = load_config_file(config_path)
+    if settings is None:
+        from h3c_hcl_mcp.infrastructure.settings import load_settings_from_env
+
+        settings = load_settings_from_env()
+
     if hcl_projects_dirs is None:
-        env_dirs = os.environ.get("H3C_CLOUD_LAB_PROJECTS", "")
-        hcl_projects_dirs = [d.strip() for d in env_dirs.split(";") if d.strip()]
+        # Priority: config > H3C_CLOUD_LAB_PROJECTS env > USERPROFILE default
+        cfg_dirs = settings.get("projects_dirs") if settings else None
+        if cfg_dirs and isinstance(cfg_dirs, list):
+            hcl_projects_dirs = [str(d) for d in cfg_dirs]
+        else:
+            env_dirs = os.environ.get("H3C_CLOUD_LAB_PROJECTS", "")
+            default_dir = os.path.join(os.environ.get("USERPROFILE", ""), "HCL", "Projects")
+            if env_dirs:
+                hcl_projects_dirs = [d.strip() for d in env_dirs.split(";") if d.strip()]
+            elif os.path.isdir(default_dir):
+                hcl_projects_dirs = [default_dir]
+            else:
+                hcl_projects_dirs = []
 
     # --- Adapter instances ---
 
@@ -228,18 +270,22 @@ def create_server(
         ),
     )
 
+    # Set serverInfo.version for MCP initialize response
+    mcp._mcp_server.version = VERSION
+
     # Register all tool modules with injected dependencies
     health.register(mcp, **adapters)
     hcl_projects.register(mcp, **adapters)
     hcl_runtime.register(mcp, **adapters)
     h3c_read.register(mcp, **adapters)
-    h3c_change.register(mcp, **adapters)
+    # h3c_change.register(mcp, **adapters)  # v0.2 tools — disabled in v0.1
     jobs.register(mcp, **adapters)
     audit.register(mcp, **adapters)
 
-    real_count = sum(
-        1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore)
-    )
+    # --- Wrap all tools with audit middleware ---
+    _wrap_tools_with_audit(mcp, audit_sink)
+
+    real_count = sum(1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore))
     logger.info(
         "MCP server '%s' v%s created: %d real adapters, %d placeholders.",
         SERVER_NAME,
@@ -250,14 +296,18 @@ def create_server(
     return mcp
 
 
-async def main() -> None:
-    """Entry point: create and run the MCP server via stdio."""
-    print(f"{SERVER_NAME} v{VERSION} — starting stdio server...", file=sys.stderr)
+async def main(config_path: str | None = None) -> None:
+    """Entry point: create and run the MCP server via stdio.
+
+    Args:
+        config_path: Optional path to YAML/JSON config file.
+    """
+    print(f"{SERVER_NAME} v{VERSION} -- starting stdio server...", file=sys.stderr)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stderr,
     )
 
-    server = create_server()
+    server = create_server(config_path=config_path)
     await server.run_stdio_async()
