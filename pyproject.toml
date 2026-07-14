@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "h3c-hcl-mcp"
+version = "0.0.1"
+description = "MCP Server for H3C Cloud Lab (HCL) network simulation environment"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+authors = [
+    { name = "FlySun1116" },
+]
+keywords = ["mcp", "hcl", "h3c", "comware", "network", "simulation"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Networking",
+]
+
+dependencies = [
+    "mcp>=1.28,<2",
+    "pydantic>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-mock>=3.14",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "pyright>=1.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/FlySun1116/HCL-Lab_mcp"
+Documentation = "https://github.com/FlySun1116/HCL-Lab_mcp/blob/main/docs/design.md"
+Repository = "https://github.com/FlySun1116/HCL-Lab_mcp.git"
+Issues = "https://github.com/FlySun1116/HCL-Lab_mcp/issues"
+
+[project.scripts]
+h3c-hcl-mcp = "h3c_hcl_mcp.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/h3c_hcl_mcp"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "UP",  # pyupgrade
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,28 @@
+HCL-Lab MCP Server (h3c-hcl-mcp)
+Copyright 2026 The h3c-hcl-mcp Contributors
+
+This product is licensed under the Apache License, Version 2.0 (the "License");
+you may not use the files in this repository except in compliance with the License.
+You may obtain a copy of the License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+---
+
+This project is a community interoperability tool that enables MCP-based AI
+agents to interact with H3C Cloud Lab (HCL) network simulation environments.
+It is NOT affiliated with, endorsed by, or sponsored by H3C Technologies Co., Ltd.
+or its affiliates.
+
+H3C, HCL, Comware, and related trademarks are the property of H3C and/or its
+affiliates. Use of these names is for interoperability description only and does
+not imply any endorsement or affiliation.
+
+This project does NOT include, redistribute, or reverse-engineer any HCL
+proprietary software, executables, disk images, documentation, or trade secrets.
+Users must legally install HCL themselves in accordance with its license terms.
