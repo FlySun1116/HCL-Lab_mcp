@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import asyncio
+
 import pytest
 
 from h3c_hcl_mcp.adapters.hcl.project_repository import (
@@ -249,3 +251,43 @@ class TestHCLProjectRepository:
         assert d["project_id"] == "hcl_sample_001"
         assert len(d["devices"]) == 2
         assert len(d["links"]) == 1
+
+
+class TestHCLRealFormat5103:
+    """BUG-002: Verify that real HCL 5.10.3 project.json format is parsed correctly."""
+
+    def test_list_real_format_project(self, synthetic_projects_dir):
+        """project.json with projectInfo/deviceInfoList should be discoverable."""
+        repo = HCLProjectRepository(projects_dirs=[str(synthetic_projects_dir)])
+        projects, _ = asyncio.run(repo.list_projects())
+        # Find the real format project
+        real_project = None
+        for p in projects:
+            if p.project_id == "hcl_real_5103":
+                real_project = p
+                break
+        assert real_project is not None, "hcl_real_5103 project not found"
+        assert real_project.name == "Test Lab 5103"
+        assert real_project.hcl_version == "5.10.3"
+        assert real_project.device_count == 2
+
+    def test_get_topology_real_format(self, synthetic_projects_dir):
+        """Topology should include devices from deviceInfoList."""
+        repo = HCLProjectRepository(projects_dirs=[str(synthetic_projects_dir)])
+        topo = asyncio.run(repo.get_topology("hcl_real_5103"))
+        assert topo.project_id == "hcl_real_5103"
+        assert len(topo.devices) == 2
+        device_names = {d.name for d in topo.devices}
+        assert "S6850_1" in device_names
+        assert "MSR36_1" in device_names
+        assert len(topo.links) == 1
+
+    def test_device_fields_real_format(self, synthetic_projects_dir):
+        """Device fields should be correctly mapped from real format."""
+        repo = HCLProjectRepository(projects_dirs=[str(synthetic_projects_dir)])
+        topo = asyncio.run(repo.get_topology("hcl_real_5103"))
+        s6850 = topo.get_device_by_name("S6850_1")
+        assert s6850 is not None
+        assert s6850.model == "S6850-56HF"
+        assert s6850.category == "switch"
+        assert s6850.comware_version == "7.1.070"
