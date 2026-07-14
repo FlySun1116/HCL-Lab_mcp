@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+.venv/
+venv/
+*.so
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+*.log
+*.db
+.env
+.env.local
+
+# Secrets & credentials
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+
+# HCL proprietary (must never be committed)
+*.exe
+*.dll
+*.vmdk
+*.vdi
+*.ova
+*.ovf
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
