@@ -52,7 +52,8 @@ from h3c_hcl_mcp.ports.secret_provider import SecretProvider
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.1.0-beta.1"
+from h3c_hcl_mcp.version import VERSION
+
 SERVER_NAME = "h3c-hcl-mcp"
 
 
@@ -220,7 +221,6 @@ def create_server(
     # --- Create the MCP server ---
     mcp = FastMCP(
         name=SERVER_NAME,
-        version=VERSION,
         instructions=(
             "HCL-Lab MCP Server provides discovery, monitoring, and CLI access "
             "for H3C Cloud Lab (HCL) network simulation environments. "
@@ -229,12 +229,15 @@ def create_server(
         ),
     )
 
+    # Set serverInfo.version for MCP initialize response
+    mcp._mcp_server.version = VERSION
+
     # Register all tool modules with injected dependencies
     health.register(mcp, **adapters)
     hcl_projects.register(mcp, **adapters)
     hcl_runtime.register(mcp, **adapters)
     h3c_read.register(mcp, **adapters)
-    h3c_change.register(mcp, **adapters)
+    # h3c_change.register(mcp, **adapters)  # v0.2 tools — disabled in v0.1
     jobs.register(mcp, **adapters)
     audit.register(mcp, **adapters)
 

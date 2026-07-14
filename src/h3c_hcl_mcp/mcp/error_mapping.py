@@ -1,16 +1,19 @@
-"""Map domain errors to structured ToolResult responses.
+"""Map domain errors to structured MCP error responses.
 
-Every tool should catch DomainError and convert to ToolResult.failure()
-using the functions in this module.
+Domain errors are raised as ToolError so MCP sets isError=true
+while preserving the structured error payload in the error text.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
+
+from mcp.server.fastmcp.exceptions import ToolError
 
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.result import ToolResult
@@ -21,12 +24,15 @@ logger = logging.getLogger(__name__)
 def map_domain_error(error: DomainError, request_id: str) -> ToolResult:
     """Map a DomainError to a ToolResult.failure().
 
+    Also raises ToolError so the MCP response has isError=true.
+    The structured error is serialized as JSON in the ToolError message.
+
     Args:
         error: The domain error to map.
         request_id: The MCP request ID for tracing.
 
-    Returns:
-        ToolResult with ok=False and structured error data.
+    Raises:
+        ToolError: Always, to set MCP isError=true.
     """
     logger.warning(
         "Mapping domain error: code=%s message=%s request_id=%s",
@@ -35,12 +41,15 @@ def map_domain_error(error: DomainError, request_id: str) -> ToolResult:
         request_id,
     )
 
-    return ToolResult.failure(
+    result = ToolResult.failure(
         request_id=request_id,
         code=error.code.value,
         message=error.message,
         details=error.details,
     )
+    # Raise ToolError to set MCP isError=true with structured error payload
+    error_payload = {"error": result.data.get("error", {})} if result.data else {}
+    raise ToolError(json.dumps(error_payload)) from error
 
 
 def handle_errors[**P, R](
@@ -56,7 +65,7 @@ def handle_errors[**P, R](
             ...
 
     When a DomainError is raised inside the decorated function, it is
-    automatically converted to a ToolResult.failure() response.
+    automatically converted to a ToolError (which sets MCP isError=true).
 
     Args:
         request_id_arg: Name of the keyword argument containing the request_id.
@@ -98,20 +107,28 @@ def internal_error(request_id: str, message: str = "Internal server error") -> T
     """Create a ToolResult for unexpected internal errors.
 
     Use this in broad except clauses to catch non-DomainError exceptions.
+    Raises ToolError to set MCP isError=true.
     """
     logger.exception("Internal error: %s [request_id=%s]", message, request_id)
-    return ToolResult.failure(
+    result = ToolResult.failure(
         request_id=request_id,
         code=ErrorCode.INTERNAL_ERROR.value,
         message=message,
     )
+    error_payload = {"error": result.data.get("error", {})} if result.data else {}
+    raise ToolError(json.dumps(error_payload))
 
 
 def not_implemented(request_id: str, feature: str = "") -> ToolResult:
-    """Create a ToolResult for features not yet implemented."""
+    """Create a ToolResult for features not yet implemented.
+
+    Raises ToolError to set MCP isError=true.
+    """
     msg = f"Not implemented: {feature}" if feature else "Not implemented"
-    return ToolResult.failure(
+    result = ToolResult.failure(
         request_id=request_id,
         code=ErrorCode.NOT_IMPLEMENTED.value,
         message=msg,
     )
+    error_payload = {"error": result.data.get("error", {})} if result.data else {}
+    raise ToolError(json.dumps(error_payload))

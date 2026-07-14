@@ -1,3 +1,3 @@
 """HCL-Lab MCP Server — MCP Server for H3C Cloud Lab network simulation."""
 
-__version__ = "0.1.0-beta.1"
+from h3c_hcl_mcp.version import VERSION as __version__  # noqa: F401

@@ -14,7 +14,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from h3c_hcl_mcp.domain.command import CommandRequest, CommandTarget, CommandType
-from h3c_hcl_mcp.domain.errors import DomainError
+from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.result import ToolResult
 from h3c_hcl_mcp.mcp.error_mapping import internal_error, map_domain_error
 from h3c_hcl_mcp.ports.command_parser import CommandParser
@@ -58,7 +58,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         runtime = await runtime_disc.discover_device(project_id, device_id)
         if not runtime.is_running:
             raise DomainError(
-                code=DomainError.DEVICE_NOT_RUNNING.code,  # type: ignore[attr-defined]
+                code=ErrorCode.DEVICE_NOT_RUNNING,
                 message=f"Device {device_id} is not running (state: {runtime.state.value})",
             )
 
@@ -78,7 +78,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         endpoint = runtime.best_endpoint()
         if endpoint is None:
             raise DomainError(
-                code=DomainError.CONSOLE_UNAVAILABLE.code,  # type: ignore[attr-defined]
+                code=ErrorCode.CONSOLE_UNAVAILABLE,
                 message=f"No available endpoint for device {device_id}",
             )
         device_name = runtime.device_name
@@ -299,7 +299,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         try:
             if source not in ("running", "startup"):
                 raise DomainError(
-                    code=DomainError.INVALID_ARGUMENT.code,  # type: ignore[attr-defined]
+                    code=ErrorCode.INVALID_ARGUMENT,
                     message=f"Invalid config source: {source}. Use 'running' or 'startup'.",
                 )
 
@@ -531,16 +531,10 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             candidate: Candidate configuration text to diff against (optional).
         """
         request_id = str(uuid.uuid4())
-        start = time.monotonic()
-
-        duration_ms = (time.monotonic() - start) * 1000
-        return ToolResult.success(
-            request_id=request_id,
-            data={
-                "device_id": device_id,
-                "message": "Configuration diff is not yet implemented (planned for v0.2).",
-                "feature_version": "0.2.0",
-            },
-            target={"project_id": project_id, "device_id": device_id},
-            duration_ms=round(duration_ms, 2),
-        )
+        try:
+            raise DomainError(
+                code=ErrorCode.NOT_IMPLEMENTED,
+                message="Configuration diff is not implemented in v0.1 (planned for v0.2).",
+            )
+        except DomainError as e:
+            return map_domain_error(e, request_id)

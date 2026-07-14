@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from h3c_hcl_mcp.mcp.server import SERVER_NAME, VERSION
+from h3c_hcl_mcp.mcp.server import SERVER_NAME
+from h3c_hcl_mcp.version import VERSION
 
 
 def main() -> None:
