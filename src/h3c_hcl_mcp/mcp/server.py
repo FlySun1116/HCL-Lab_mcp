@@ -52,7 +52,7 @@ from h3c_hcl_mcp.ports.secret_provider import SecretProvider
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.0.1"
+VERSION = "0.1.0-beta.1"
 SERVER_NAME = "h3c-hcl-mcp"
 
 
@@ -220,6 +220,7 @@ def create_server(
     # --- Create the MCP server ---
     mcp = FastMCP(
         name=SERVER_NAME,
+        version=VERSION,
         instructions=(
             "HCL-Lab MCP Server provides discovery, monitoring, and CLI access "
             "for H3C Cloud Lab (HCL) network simulation environments. "
@@ -237,9 +238,7 @@ def create_server(
     jobs.register(mcp, **adapters)
     audit.register(mcp, **adapters)
 
-    real_count = sum(
-        1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore)
-    )
+    real_count = sum(1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore))
     logger.info(
         "MCP server '%s' v%s created: %d real adapters, %d placeholders.",
         SERVER_NAME,

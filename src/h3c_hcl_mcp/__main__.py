@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from h3c_hcl_mcp.mcp.server import SERVER_NAME, VERSION
+
 
 def main() -> None:
     """Launch the HCL-Lab MCP Server via stdio transport."""
-    print("h3c-hcl-mcp v0.0.1 — starting...", file=sys.stderr)
+    print(f"{SERVER_NAME} v{VERSION} -- starting stdio server...", file=sys.stderr)
 
     from h3c_hcl_mcp.mcp.server import main as server_main
 

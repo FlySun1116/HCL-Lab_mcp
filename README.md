@@ -142,16 +142,19 @@ See [SECURITY.md](SECURITY.md) for the full security model.
 git clone https://github.com/FlySun1116/HCL-Lab_mcp.git
 cd HCL-Lab_mcp
 
-# Install dev dependencies
-uv pip install -e ".[dev]"
+# Create venv and install dev dependencies
+uv sync --extra dev
 
 # Lint & typecheck
-ruff check src/ tests/
-ruff format --check src/ tests/
-mypy src/
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src/
 
 # Run tests
-pytest
+uv run pytest
+
+# Build
+uv build
 
 # Run MCP Inspector
 npx @modelcontextprotocol/inspector uv run h3c-hcl-mcp

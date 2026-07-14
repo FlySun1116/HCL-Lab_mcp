@@ -35,9 +35,7 @@ class DeviceSessionManager:
         self._sessions: dict[_DEVICE_KEY, DeviceSession] = {}
         self._transports: dict[_DEVICE_KEY, ConsoleTelnetTransport] = {}
 
-    def get_or_create_session(
-        self, project_id: str, device_id: int, device_name: str = ""
-    ) -> DeviceSession:
+    def get_or_create_session(self, project_id: str, device_id: int, device_name: str = "") -> DeviceSession:
         """Get an existing session or create a new one."""
         key = (project_id, device_id)
         if key not in self._sessions:
@@ -47,9 +45,7 @@ class DeviceSessionManager:
             )
         return self._sessions[key]
 
-    def get_or_create_transport(
-        self, project_id: str, device_id: int
-    ) -> ConsoleTelnetTransport:
+    def get_or_create_transport(self, project_id: str, device_id: int) -> ConsoleTelnetTransport:
         """Get or create the underlying ConsoleTelnetTransport for a device."""
         key = (project_id, device_id)
         if key not in self._transports:
@@ -67,7 +63,9 @@ class DeviceSessionManager:
             except Exception:
                 logger.warning(
                     "Error closing transport for device %s/%s",
-                    project_id, device_id, exc_info=True,
+                    project_id,
+                    device_id,
+                    exc_info=True,
                 )
         self._sessions.pop(key, None)
 
@@ -119,9 +117,7 @@ class SessionManagerTransport(DeviceTransport):
         device_id = int(device_id_str)
 
         self._current_key = (project_id, device_id)
-        self._current_transport = self._manager.get_or_create_transport(
-            project_id, device_id
-        )
+        self._current_transport = self._manager.get_or_create_transport(project_id, device_id)
 
         session = self._manager.get_or_create_session(project_id, device_id)
         if not session.is_connected:
@@ -136,9 +132,7 @@ class SessionManagerTransport(DeviceTransport):
             )
         return await self._current_transport.execute(request)
 
-    async def execute_config(
-        self, commands: list[str], timeout_seconds: float = 30.0
-    ) -> CommandResult:
+    async def execute_config(self, commands: list[str], timeout_seconds: float = 30.0) -> CommandResult:
         """Configuration writes are disabled in v0.1."""
         if self._current_transport is None:
             raise DomainError(

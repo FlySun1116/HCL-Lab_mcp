@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "h3c-hcl-mcp"
-version = "0.0.1"
+version = "0.1.0-beta.1"
 description = "MCP Server for H3C Cloud Lab (HCL) network simulation environment"
 readme = "README.md"
 license = { text = "Apache-2.0" }
