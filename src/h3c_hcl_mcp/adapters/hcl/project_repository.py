@@ -99,7 +99,6 @@ def _normalize_project_json(data: dict[str, object], json_path: str) -> dict[str
         # Real HCL 5.10.3 format
         info = data.get("projectInfo", {})
         if isinstance(info, dict):
-            info = info  # type: ignore[assignment]
             normalized: dict[str, object] = {
                 "id": str(info.get("projectId", info.get("id", ""))),
                 "name": str(info.get("projectName", info.get("name", "Unknown"))),
@@ -113,16 +112,17 @@ def _normalize_project_json(data: dict[str, object], json_path: str) -> dict[str
             devices = []
             for d in device_list:
                 if isinstance(d, dict):
-                    d = d  # type: ignore[assignment]
-                    devices.append({
-                        "name": str(d.get("deviceName", d.get("name", ""))),
-                        "id": int(d.get("deviceId", d.get("id", 0))),  # type: ignore[arg-type]
-                        "model": str(d.get("deviceModel", d.get("model", ""))),
-                        "category": str(d.get("deviceType", d.get("category", ""))),
-                        "version": str(d.get("comwareVersion", d.get("version", ""))),
-                        "configPath": str(d.get("configPath", d.get("configPath", ""))),
-                    })
-            normalized["devices"] = devices  # type: ignore[assignment]
+                    devices.append(
+                        {
+                            "name": str(d.get("deviceName", d.get("name", ""))),
+                            "id": int(str(d.get("deviceId", d.get("id", 0)))),
+                            "model": str(d.get("deviceModel", d.get("model", ""))),
+                            "category": str(d.get("deviceType", d.get("category", ""))),
+                            "version": str(d.get("comwareVersion", d.get("version", ""))),
+                            "configPath": str(d.get("configPath", d.get("configPath", ""))),
+                        }
+                    )
+            normalized["devices"] = devices
         else:
             normalized["devices"] = []
 

@@ -87,6 +87,6 @@ def _extract_target(kwargs: dict[str, Any]) -> dict[str, object] | None:
     if project_id is not None:
         target: dict[str, object] = {"project_id": str(project_id)}
         if device_id is not None:
-            target["device_id"] = int(device_id)  # type: ignore[call-overload]
+            target["device_id"] = int(str(device_id))
         return target
     return None

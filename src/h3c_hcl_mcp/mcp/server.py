@@ -33,7 +33,6 @@ from h3c_hcl_mcp.infrastructure.secrets import SecretProviderImpl
 from h3c_hcl_mcp.infrastructure.settings import PolicySettings
 from h3c_hcl_mcp.mcp.tools import (
     audit,
-    h3c_change,
     h3c_read,
     hcl_projects,
     hcl_runtime,
@@ -49,10 +48,9 @@ from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
 from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
 from h3c_hcl_mcp.ports.secret_provider import SecretProvider
+from h3c_hcl_mcp.version import VERSION
 
 logger = logging.getLogger(__name__)
-
-from h3c_hcl_mcp.version import VERSION
 
 SERVER_NAME = "h3c-hcl-mcp"
 

@@ -299,7 +299,7 @@ def load_settings_from_env() -> dict[str, object]:
     for key, value in os.environ.items():
         if not key.startswith("H3C_HCL_MCP__"):
             continue
-        config_key = key[len("H3C_HCL_MCP__"):].lower()
+        config_key = key[len("H3C_HCL_MCP__") :].lower()
         result[config_key] = value
     return result
 

@@ -6,7 +6,6 @@ Endpoint discovery via config, formula, and log parsing (when available).
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from datetime import UTC, datetime
