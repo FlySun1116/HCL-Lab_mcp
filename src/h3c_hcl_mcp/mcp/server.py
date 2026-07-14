@@ -19,13 +19,13 @@ from mcp.server.fastmcp import FastMCP
 
 from h3c_hcl_mcp.adapters.comware.parsers.facts import FactsParser
 from h3c_hcl_mcp.adapters.comware.parsers.interfaces import InterfaceBriefParser
+from h3c_hcl_mcp.adapters.comware.session_manager import (
+    DeviceSessionManager,
+    SessionManagerTransport,
+)
 from h3c_hcl_mcp.adapters.hcl.project_repository import HCLProjectRepository
 from h3c_hcl_mcp.adapters.hcl.runtime_discovery import HCLRuntimeDiscovery
-from h3c_hcl_mcp.domain.audit import AuditEvent
-from h3c_hcl_mcp.domain.command import CommandRequest, CommandResult
-from h3c_hcl_mcp.domain.device import DeviceRuntime, RuntimeEndpoint
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
-from h3c_hcl_mcp.domain.project import LabProject, Topology
 from h3c_hcl_mcp.infrastructure.audit.store import SQLiteAuditStore
 from h3c_hcl_mcp.infrastructure.policy.approvals import ApprovalProviderImpl
 from h3c_hcl_mcp.infrastructure.policy.engine import PolicyEngineImpl
@@ -88,35 +88,9 @@ class _CompositeCommandParser(CommandParser):
 
 
 # ---------------------------------------------------------------------------
-# Placeholder implementations (only for T4 Comware transport — still in progress)
 # ---------------------------------------------------------------------------
-
-
-class _PlaceholderDeviceTransport(DeviceTransport):
-    """Placeholder transport — T4 Comware driver is still in progress."""
-
-    async def connect(self, endpoint: RuntimeEndpoint) -> None:
-        raise DomainError(
-            code=ErrorCode.CONNECTION_FAILED,
-            message="Comware console transport not yet available (T4 in progress).",
-        )
-
-    async def execute(self, request: CommandRequest) -> CommandResult:
-        raise DomainError(
-            code=ErrorCode.CONNECTION_FAILED,
-            message="Comware console transport not yet available (T4 in progress).",
-        )
-
-    async def execute_config(
-        self, commands: list[str], timeout_seconds: float = 30.0
-    ) -> CommandResult:
-        raise DomainError(
-            code=ErrorCode.WRITE_DISABLED,
-            message="Write operations are not available.",
-        )
-
-    async def close(self) -> None:
-        pass
+# Placeholder implementations (only for JobStore — sufficient for v0.1)
+# ---------------------------------------------------------------------------
 
 
 class _PlaceholderJobStore(JobStore):
@@ -189,11 +163,10 @@ def create_server(
 
     Wires real adapter implementations from:
     - T3: HCLProjectRepository, HCLRuntimeDiscovery
-    - T4: FactsParser, InterfaceBriefParser (via CompositeCommandParser)
+    - T4: FactsParser, InterfaceBriefParser, SessionManagerTransport
     - T5: PolicyEngineImpl, SQLiteAuditStore, SecretProviderImpl, ApprovalProviderImpl
 
-    Placeholders remain for:
-    - DeviceTransport (T4 Comware transport still in progress)
+    Placeholder remains for:
     - JobStore (in-memory placeholder is sufficient for v0.1)
 
     Args:
@@ -219,7 +192,8 @@ def create_server(
 
     # T4: Comware parsers (composite — transport still placeholder)
     cmd_parser: CommandParser = _CompositeCommandParser()
-    device_transport: DeviceTransport = _PlaceholderDeviceTransport()
+    session_manager = DeviceSessionManager()
+    device_transport: DeviceTransport = SessionManagerTransport(session_manager)
 
     # T5: Security
     policy_settings = PolicySettings()
@@ -264,9 +238,7 @@ def create_server(
     audit.register(mcp, **adapters)
 
     real_count = sum(
-        1
-        for v in adapters.values()
-        if not isinstance(v, (_PlaceholderDeviceTransport, _PlaceholderJobStore))
+        1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore)
     )
     logger.info(
         "MCP server '%s' v%s created: %d real adapters, %d placeholders.",

@@ -54,7 +54,7 @@ def detect_prompt(buffer: str) -> str | None:
     return matches[-1].group(0)
 
 
-def _find_last_prompt_match(buffer: str) -> re.Match | None:
+def _find_last_prompt_match(buffer: str) -> re.Match[str] | None:
     """Return the last regex match object for a prompt in the buffer."""
     matches = list(_ANY_PROMPT.finditer(buffer))
     return matches[-1] if matches else None

@@ -146,7 +146,12 @@ class FakeComwareTelnetServer:
                 writer.close()
                 return
 
-            response = self._get_response(decoded)
+            paginated_pages = self._paginated_output.get(decoded.lower())
+            if paginated_pages is not None:
+                # Send paginated output all at once with ---- More ---- markers
+                response = self._build_paginated(paginated_pages)
+            else:
+                response = self._get_response(decoded)
 
             if self.echo_commands:
                 writer.write(f"\r\n{decoded}\r\n".encode("ascii"))
@@ -155,16 +160,18 @@ class FakeComwareTelnetServer:
             writer.write(f"\r\n{self.prompt}".encode("ascii"))
             await writer.drain()
 
-    def _get_response(self, command: str) -> str:
-        """Get the response for a given command."""
-        cmd_lower = command.strip().lower()
+    def _build_paginated(self, pages: list[str]) -> str:
+        """Build paginated response with ---- More ---- markers between pages."""
+        parts: list[str] = []
+        for i, page in enumerate(pages):
+            parts.append(f"\r\n{page}")
+            if i < len(pages) - 1:
+                parts.append("\r\n  ---- More ----")
+        return "".join(parts)
 
-        # Check paginated handlers first
-        if cmd_lower in self._paginated_output:
-            pages = self._paginated_output[cmd_lower]
-            return "\r\n".join(
-                f"{page}\r\n  ---- More ----" if i < len(pages) - 1 else page for i, page in enumerate(pages)
-            )
+    def _get_response(self, command: str) -> str:
+        """Get the response for a given command (non-paginated)."""
+        cmd_lower = command.strip().lower()
 
         # Check fixed handlers
         if cmd_lower in self._command_handlers:
@@ -326,7 +333,8 @@ class TestConsoleTelnetTransport:
 
         assert "GigabitEthernet1/0/1" in result.raw_output
         assert "GigabitEthernet1/0/3" in result.raw_output
-        assert "Paginated output" in str(result.warnings)
+        # Pagination markers should appear in the output
+        assert "---- More ----" in result.raw_output
         await transport.close()
 
     async def test_execute_config_raises_write_disabled(self, transport, endpoint, server):

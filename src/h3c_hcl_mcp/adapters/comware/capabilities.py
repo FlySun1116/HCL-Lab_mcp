@@ -83,4 +83,5 @@ def supports_transport(model: str, transport: str) -> bool | None:
     if caps is None:
         return None
     key = f"supports_{transport}"
-    return caps.get(key, False)
+    val = caps.get(key, False)
+    return bool(val) if val is not None else None

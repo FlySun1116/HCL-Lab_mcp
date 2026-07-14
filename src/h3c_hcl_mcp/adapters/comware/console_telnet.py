@@ -224,13 +224,14 @@ class ConsoleTelnetTransport(DeviceTransport):
         Filters telnet IAC commands and startup noise.
         Raises DomainError(PROMPT_TIMEOUT) if no prompt appears within timeout.
         """
+        assert self._reader is not None, "reader must be set before calling _wait_for_prompt"
         buffer = ""
         deadline = time.monotonic() + timeout
 
         while time.monotonic() < deadline:
             try:
                 data = await asyncio.wait_for(
-                    self._reader.read(_READ_CHUNK) if self._reader else b"",
+                    self._reader.read(_READ_CHUNK),
                     timeout=_IDLE_POLL_INTERVAL,
                 )
             except TimeoutError:
@@ -280,6 +281,7 @@ class ConsoleTelnetTransport(DeviceTransport):
         Sends space on '---- More ----' to continue pagination.
         Truncates output at max_chars.
         """
+        assert self._reader is not None, "reader must be set before calling _collect_output"
         buffer = ""
         deadline = time.monotonic() + timeout
         more_pages_sent = 0
@@ -287,7 +289,7 @@ class ConsoleTelnetTransport(DeviceTransport):
         while time.monotonic() < deadline:
             try:
                 data = await asyncio.wait_for(
-                    self._reader.read(_READ_CHUNK) if self._reader else b"",
+                    self._reader.read(_READ_CHUNK),
                     timeout=_IDLE_POLL_INTERVAL,
                 )
             except TimeoutError:
@@ -299,7 +301,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                     if remaining > 1.0:
                         try:
                             data = await asyncio.wait_for(
-                                self._reader.read(_READ_CHUNK) if self._reader else b"",
+                                self._reader.read(_READ_CHUNK),
                                 timeout=min(1.0, remaining),
                             )
                             if data:
@@ -336,14 +338,22 @@ class ConsoleTelnetTransport(DeviceTransport):
                 if remaining > 0.5:
                     try:
                         more_data = await asyncio.wait_for(
-                            self._reader.read(_READ_CHUNK) if self._reader else b"",
+                            self._reader.read(_READ_CHUNK),
                             timeout=min(0.3, remaining),
                         )
                         if more_data:
                             clean_more = _filter_iac(more_data)
                             if clean_more:
-                                buffer += clean_more.decode("ascii", errors="replace")
-                            continue
+                                extra = clean_more.decode("ascii", errors="replace")
+                                # If the extra data is only a prompt (server's
+                                # response to pagination space), skip it —
+                                # the output is already complete.
+                                extra_prompt = detect_prompt(extra)
+                                if extra_prompt and extra.strip() == extra_prompt:
+                                    pass  # ignore redundant prompt
+                                else:
+                                    buffer += extra
+                                    continue
                     except TimeoutError:
                         pass
                 break
@@ -355,6 +365,12 @@ class ConsoleTelnetTransport(DeviceTransport):
 
         if more_pages_sent > 0:
             warnings.append(f"Paginated output: {more_pages_sent} page(s)")
+
+        # Count More prompts in output even if we didn't send space
+        # (data may have arrived all at once)
+        more_occurrences = buffer.count("---- More ----")
+        if more_occurrences > 0 and more_pages_sent == 0:
+            warnings.append(f"Paginated output detected: {more_occurrences} More prompt(s)")
 
         # Truncate to max chars if needed
         if len(buffer) > max_chars:
