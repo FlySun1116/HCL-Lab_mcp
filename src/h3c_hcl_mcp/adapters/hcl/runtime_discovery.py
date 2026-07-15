@@ -104,17 +104,31 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
         self._hcl_running_cache_time = now
         return self._hcl_running_cache
 
+    def set_topology_devices(
+        self,
+        project_id: str,
+        devices: list[tuple[int, str]],
+    ) -> None:
+        """Register devices from topology for runtime discovery.
+
+        Args:
+            project_id: Project identifier.
+            devices: List of (device_id, device_name) tuples.
+        """
+        for device_id, _device_name in devices:
+            key = (project_id, device_id)
+            if key not in self._device_states:
+                self._device_states[key] = (DeviceState.UNKNOWN, [])
+
     async def discover_project(self, project_id: str) -> list[DeviceRuntime]:
         """Discover runtime state for all known devices in a project.
 
         Checks:
-        1. Explicit config/manual states
-        2. HCL process detection (real HCL environment)
-        3. Formula-based endpoint guessing when HCL is detected
+        1. HCL process detection (real HCL environment)
+        2. Formula-based endpoint guessing when HCL is detected
+        3. Explicit config/manual states (override auto-detection)
 
         Returns a list of DeviceRuntime — one per known device.
-        Devices not explicitly configured will be returned as UNKNOWN/STOPPED
-        with no endpoints.
         """
         results: list[DeviceRuntime] = []
         hcl_running = await self._check_hcl_running()
@@ -125,22 +139,40 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
                 continue
             seen_devices.add(device_id)
             device_name = f"Device_{device_id}"
+
+            # Auto-detect state when HCL is running and no explicit state set
+            if state == DeviceState.UNKNOWN and hcl_running:
+                effective_state = DeviceState.RUNNING
+                if not endpoints:
+                    # Generate formula-based candidate endpoint
+                    port = self._fallback_telnet_base + device_id
+                    candidate = RuntimeEndpoint(
+                        transport=TransportType.CONSOLE_TELNET,
+                        host=self._console_host,
+                        port=port,
+                        source=DiscoverySource.FORMULA,
+                        confidence=0.5,
+                        discovered_at=datetime.now(tz=UTC),
+                        extra={
+                            "project_id": project_id,
+                            "device_id": str(device_id),
+                        },
+                    )
+                    effective_endpoints = [candidate]
+                else:
+                    effective_endpoints = list(endpoints)
+            else:
+                effective_state = state
+                effective_endpoints = list(endpoints)
+
             runtime = DeviceRuntime(
                 device_id=device_id,
                 device_name=device_name,
-                state=state,
-                endpoints=list(endpoints),
-                last_seen=datetime.now(tz=UTC) if state == DeviceState.RUNNING else None,
+                state=effective_state,
+                endpoints=effective_endpoints,
+                last_seen=datetime.now(tz=UTC) if effective_state == DeviceState.RUNNING else None,
             )
             results.append(runtime)
-
-        # When HCL is running but no explicit states configured, provide
-        # diagnostic information via warnings (returned by the MCP tool layer).
-        if hcl_running and not results:
-            # HCL detected but no devices configured — this is informational;
-            # the MCP tools layer should add a warning guiding users to
-            # configure device states or use explicit endpoints.
-            pass
 
         return results
 

@@ -18,7 +18,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Configuration directory
@@ -69,6 +69,8 @@ class PolicyMode(StrEnum):
 class ServerSettings(BaseModel):
     """MCP server operational settings."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = "h3c-hcl-mcp"
     transport: TransportMode = TransportMode.STDIO
     log_level: str = "INFO"
@@ -79,6 +81,8 @@ class ServerSettings(BaseModel):
 
 class PolicySettings(BaseModel):
     """Security policy settings."""
+
+    model_config = ConfigDict(extra="forbid")
 
     mode: PolicyMode = PolicyMode.READ_ONLY
     require_approval_for_writes: bool = True
@@ -94,6 +98,8 @@ class PolicySettings(BaseModel):
 class HCLRuntimeDiscoverySettings(BaseModel):
     """HCL runtime discovery configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     process_inspection: bool = True
     log_observation: bool = True
     loopback_probe: bool = True
@@ -105,11 +111,15 @@ class HCLRuntimeDiscoverySettings(BaseModel):
 class PrivateControlAPISettings(BaseModel):
     """HCL private control API — disabled by default, requires H3C authorization."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = False
 
 
 class HCLDiscoverySettings(BaseModel):
     """HCL project discovery and runtime settings."""
+
+    model_config = ConfigDict(extra="forbid")
 
     projects_dirs: list[str] = Field(default_factory=list)
     install_dir: str | None = None
@@ -121,6 +131,8 @@ class HCLDiscoverySettings(BaseModel):
 class SSHSettings(BaseModel):
     """SSH connection settings."""
 
+    model_config = ConfigDict(extra="forbid")
+
     username_env: str = "H3C_HCL_MCP_SSH_USERNAME"
     password_env: str = "H3C_HCL_MCP_SSH_PASSWORD"
     known_hosts: str = ""
@@ -128,6 +140,8 @@ class SSHSettings(BaseModel):
 
 class DeviceSettings(BaseModel):
     """Device transport and connection settings."""
+
+    model_config = ConfigDict(extra="forbid")
 
     preferred_transports: list[str] = Field(default_factory=lambda: ["console_telnet", "ssh"])
     connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
@@ -139,6 +153,8 @@ class DeviceSettings(BaseModel):
 class AuditSettings(BaseModel):
     """Audit trail configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     database: str = ""
     retention_days: int = Field(default=90, ge=1, le=365)
@@ -147,6 +163,8 @@ class AuditSettings(BaseModel):
 
 class HCLSettings(BaseModel):
     """Root settings model — single configuration entry point."""
+
+    model_config = ConfigDict(extra="forbid")
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     hcl: HCLDiscoverySettings = Field(default_factory=HCLDiscoverySettings)
@@ -180,16 +198,16 @@ def _load_from_env() -> dict[str, Any]:
         stripped = key[len(_ENV_PREFIX):].lower()
         parts = stripped.split("__")
         # Navigate into nested dict, creating levels as needed
-        current = result
+        current: dict[str, Any] | None = result
         for part in parts[:-1]:
             if part not in current:
                 current[part] = {}
             elif not isinstance(current[part], dict):
                 # Value already set at a shallower level — skip
-                current = {}
+                current = None
                 break
             current = current[part]
-        if current:
+        if current is not None:
             current[parts[-1]] = _coerce_value(value)
     return result
 
@@ -445,7 +463,10 @@ def load_settings(
     try:
         return HCLSettings(**merged)
     except Exception as e:
+        # Pydantic v2: ValidationError.errors() is a method, not a property
         errors = getattr(e, "errors", None)
+        if callable(errors):
+            errors = errors()
         if errors is not None:
             for err in errors:
                 loc = " -> ".join(str(part) for part in err.get("loc", []))
@@ -586,37 +607,3 @@ def _flatten_config(data: dict[str, object], prefix: str = "") -> dict[str, obje
         else:
             result[flat_key] = value
     return result
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Deep merge two dicts. override values take precedence."""
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def load_settings(
-    config_path: str | None = None,
-    cli_overrides: dict[str, Any] | None = None,
-) -> HCLSettings:
-    """Load settings from all sources. Priority: CLI > env > file > defaults."""
-    merged: dict[str, Any] = {}
-    # Layer 3: Config file
-    config_data = _load_config_file(config_path)
-    # Layer 2: Environment variables
-    env_data = _load_from_env()
-    merged = _deep_merge(config_data, env_data)
-    # Layer 1: CLI overrides
-    if cli_overrides:
-        merged = _deep_merge(merged, cli_overrides)
-    return HCLSettings(
-        server=ServerSettings(**merged.get("server", {})),
-        hcl=HCLDiscoverySettings(**merged.get("hcl", {})),
-        devices=DeviceSettings(**merged.get("devices", {})),
-        policy=PolicySettings(**merged.get("policy", {})),
-        audit=AuditSettings(**merged.get("audit", {})),
-    )

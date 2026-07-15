@@ -30,7 +30,7 @@ from h3c_hcl_mcp.infrastructure.audit.store import SQLiteAuditStore
 from h3c_hcl_mcp.infrastructure.policy.approvals import ApprovalProviderImpl
 from h3c_hcl_mcp.infrastructure.policy.engine import PolicyEngineImpl
 from h3c_hcl_mcp.infrastructure.secrets import SecretProviderImpl
-from h3c_hcl_mcp.infrastructure.settings import PolicySettings
+from h3c_hcl_mcp.infrastructure.settings import HCLSettings
 from h3c_hcl_mcp.mcp.tools import (
     audit,
     h3c_read,
@@ -176,6 +176,7 @@ def _wrap_tools_with_audit(mcp: FastMCP, audit_sink: AuditSink) -> None:
 
 
 def create_server(
+    settings: HCLSettings | None = None,
     hcl_projects_dirs: list[str] | None = None,
     config_path: str | None = None,
 ) -> FastMCP:
@@ -190,35 +191,40 @@ def create_server(
     - JobStore (in-memory placeholder is sufficient for v0.1)
 
     Args:
-        hcl_projects_dirs: Directories to scan for HCL projects.
-        config_path: Optional path to YAML/JSON config file.
+        settings: Pre-loaded HCLSettings instance (preferred for v0.1+).
+        hcl_projects_dirs: Legacy — directories to scan for HCL projects.
+        config_path: Legacy — optional path to YAML/JSON config file.
 
     Returns:
         A fully configured FastMCP server ready to start via stdio.
     """
     import os
 
-    # Load configuration (CLI > env > config file > defaults)
-    settings: dict[str, object] | None = None
-    if config_path:
-        from h3c_hcl_mcp.infrastructure.settings import load_config_file
-
-        settings = load_config_file(config_path)
+    # --- Resolve settings ---
     if settings is None:
-        from h3c_hcl_mcp.infrastructure.settings import load_settings_from_env
+        # Legacy path: load from config file or env
+        if config_path:
+            from h3c_hcl_mcp.infrastructure.settings import load_settings
 
-        settings = load_settings_from_env()
-
-    if hcl_projects_dirs is None:
-        # Priority: config > H3C_CLOUD_LAB_PROJECTS env > USERPROFILE default
-        cfg_dirs = settings.get("projects_dirs") if settings else None
-        if cfg_dirs and isinstance(cfg_dirs, list):
-            hcl_projects_dirs = [str(d) for d in cfg_dirs]
+            settings = load_settings(config_path=config_path)
         else:
+            # Fallback to defaults with env override
+            from h3c_hcl_mcp.infrastructure.settings import HCLSettings as HCLS
+
+            settings = HCLS()
+
+    # --- Resolve projects_dirs (legacy CLI override) ---
+    if hcl_projects_dirs is None:
+        hcl_projects_dirs = list(settings.hcl.projects_dirs)
+        if not hcl_projects_dirs:
             env_dirs = os.environ.get("H3C_CLOUD_LAB_PROJECTS", "")
-            default_dir = os.path.join(os.environ.get("USERPROFILE", ""), "HCL", "Projects")
+            default_dir = os.path.join(
+                os.environ.get("USERPROFILE", ""), "HCL", "Projects"
+            )
             if env_dirs:
-                hcl_projects_dirs = [d.strip() for d in env_dirs.split(";") if d.strip()]
+                hcl_projects_dirs = [
+                    d.strip() for d in env_dirs.split(";") if d.strip()
+                ]
             elif os.path.isdir(default_dir):
                 hcl_projects_dirs = [default_dir]
             else:
@@ -230,7 +236,10 @@ def create_server(
     project_repo: ProjectRepository = HCLProjectRepository(
         projects_dirs=hcl_projects_dirs,
     )
-    runtime_disc: RuntimeDiscovery = HCLRuntimeDiscovery()
+    runtime_disc: RuntimeDiscovery = HCLRuntimeDiscovery(
+        fallback_telnet_base=settings.hcl.runtime_discovery.fallback_telnet_base,
+        console_host=settings.hcl.runtime_discovery.console_host,
+    )
 
     # T4: Comware parsers (composite — transport still placeholder)
     cmd_parser: CommandParser = _CompositeCommandParser()
@@ -238,9 +247,9 @@ def create_server(
     device_transport: DeviceTransport = SessionManagerTransport(session_manager)
 
     # T5: Security
-    policy_settings = PolicySettings()
-    policy_engine: PolicyEngine = PolicyEngineImpl(settings=policy_settings)
-    audit_sink: AuditSink = SQLiteAuditStore()
+    policy_engine: PolicyEngine = PolicyEngineImpl(settings=settings.policy)
+    audit_db = settings.audit.database if settings.audit.database else None
+    audit_sink: AuditSink = SQLiteAuditStore(db_path=audit_db)
     secret_provider: SecretProvider = SecretProviderImpl()
     approval_prov: ApprovalProvider = ApprovalProviderImpl()
 
@@ -282,7 +291,12 @@ def create_server(
     jobs.register(mcp, **adapters)
     audit.register(mcp, **adapters)
 
-    # --- Wrap all tools with audit middleware ---
+    # --- Wrap call_tool with validation error reformatting (BUG-014) ---
+    from h3c_hcl_mcp.mcp.validation_middleware import wrap_call_tool_with_validation
+
+    wrap_call_tool_with_validation(mcp)
+
+    # --- Wrap all tools with audit middleware (BUG-009) ---
     _wrap_tools_with_audit(mcp, audit_sink)
 
     real_count = sum(1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore))
@@ -309,5 +323,5 @@ async def main(config_path: str | None = None) -> None:
         stream=sys.stderr,
     )
 
-    server = create_server(config_path=config_path)
+    server = create_server(settings=None, config_path=config_path)
     await server.run_stdio_async()

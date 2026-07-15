@@ -8,15 +8,6 @@ server:
   max_tool_seconds: 60
   max_output_chars: 32768
 
-# HTTP mode (v0.5+ — not active in v0.1 stdio mode)
-http:
-  host: 127.0.0.1
-  port: 8765
-  path: /mcp
-  allowed_origins:
-    - http://127.0.0.1
-  auth_required: true
-
 # HCL discovery settings
 hcl:
   # install_dir: "F:\\HCL"       # Auto-discovered if omitted

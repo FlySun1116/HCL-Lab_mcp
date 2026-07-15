@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/FlySun1116/HCL-Lab_mcp/main/config/config.schema.json",
   "server": {
     "name": "h3c-hcl-mcp",
     "transport": "stdio",
