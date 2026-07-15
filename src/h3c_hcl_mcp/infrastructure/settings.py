@@ -198,16 +198,21 @@ def _load_from_env() -> dict[str, Any]:
         stripped = key[len(_ENV_PREFIX):].lower()
         parts = stripped.split("__")
         # Navigate into nested dict, creating levels as needed
-        current: dict[str, Any] | None = result
+        current: dict[str, Any] = result
+        skip = False
         for part in parts[:-1]:
             if part not in current:
                 current[part] = {}
             elif not isinstance(current[part], dict):
-                # Value already set at a shallower level — skip
-                current = None
+                skip = True
                 break
-            current = current[part]
-        if current is not None:
+            next_level = current[part]
+            if isinstance(next_level, dict):
+                current = next_level
+            else:
+                skip = True
+                break
+        if not skip:
             current[parts[-1]] = _coerce_value(value)
     return result
 
@@ -292,7 +297,7 @@ def _load_file_strict(path: Path) -> dict[str, Any]:
 def _parse_yaml_strict(raw: str, path: Path) -> dict[str, Any]:
     """Parse YAML content with clear error messages on failure."""
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
     except ImportError:
         print(
             "ERROR: YAML configuration requires the 'pyyaml' package. "
@@ -312,7 +317,8 @@ def _parse_yaml_strict(raw: str, path: Path) -> dict[str, Any]:
 
     if data is None:
         return {}
-    return data
+    result: dict[str, Any] = data
+    return result
 
 
 def _parse_json_strict(raw: str, path: Path) -> dict[str, Any]:
@@ -382,7 +388,7 @@ def _load_config_file(config_path: str | None = None) -> dict[str, Any]:
 def _parse_yaml(raw: str) -> dict[str, Any]:
     """Parse YAML content if PyYAML is available."""
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         return yaml.safe_load(raw) or {}
     except ImportError:
