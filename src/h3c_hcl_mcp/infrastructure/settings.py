@@ -432,6 +432,7 @@ def load_settings(
         SystemExit: On missing/malformed config, or unknown fields.
     """
     # --- Layer 3: Config file ---
+    config_data: dict[str, Any] | None
     if config_path is not None:
         path = Path(config_path)
         if not path.exists():
@@ -453,6 +454,7 @@ def load_settings(
                 file=sys.stderr,
             )
             sys.exit(1)
+    assert config_data is not None  # narrowed by sys.exit above
 
     # --- Layer 2: Environment variables ---
     merged = config_data
