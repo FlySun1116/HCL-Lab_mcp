@@ -195,7 +195,7 @@ def _load_from_env() -> dict[str, Any]:
     for key, value in os.environ.items():
         if not key.startswith(_ENV_PREFIX):
             continue
-        stripped = key[len(_ENV_PREFIX):].lower()
+        stripped = key[len(_ENV_PREFIX) :].lower()
         parts = stripped.split("__")
         # Navigate into nested dict, creating levels as needed
         current: dict[str, Any] = result
@@ -278,8 +278,7 @@ def _load_file_strict(path: Path) -> dict[str, Any]:
         result = _parse_json_strict(raw, path)
     else:
         print(
-            f"ERROR: Unsupported configuration file format: '{path}'. "
-            "Use .yaml, .yml, or .json.",
+            f"ERROR: Unsupported configuration file format: '{path}'. Use .yaml, .yml, or .json.",
             file=sys.stderr,
         )
         sys.exit(1)

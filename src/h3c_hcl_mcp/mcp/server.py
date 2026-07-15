@@ -218,13 +218,9 @@ def create_server(
         hcl_projects_dirs = list(settings.hcl.projects_dirs)
         if not hcl_projects_dirs:
             env_dirs = os.environ.get("H3C_CLOUD_LAB_PROJECTS", "")
-            default_dir = os.path.join(
-                os.environ.get("USERPROFILE", ""), "HCL", "Projects"
-            )
+            default_dir = os.path.join(os.environ.get("USERPROFILE", ""), "HCL", "Projects")
             if env_dirs:
-                hcl_projects_dirs = [
-                    d.strip() for d in env_dirs.split(";") if d.strip()
-                ]
+                hcl_projects_dirs = [d.strip() for d in env_dirs.split(";") if d.strip()]
             elif os.path.isdir(default_dir):
                 hcl_projects_dirs = [default_dir]
             else:
