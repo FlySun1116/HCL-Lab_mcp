@@ -39,6 +39,16 @@ def _default_config_dir() -> Path:
         return Path(base) / "h3c-hcl-mcp"
 
 
+def _default_config_paths() -> list[Path]:
+    """Return the default configuration file search paths in priority order."""
+    config_dir = _default_config_dir()
+    return [
+        config_dir / "config.yaml",
+        config_dir / "config.yml",
+        config_dir / "config.json",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Settings models
 # ---------------------------------------------------------------------------
@@ -77,6 +87,72 @@ class PolicySettings(BaseModel):
     max_concurrent_sessions: int = Field(default=32, ge=1, le=256)
     session_timeout_seconds: int = Field(default=300, ge=30, le=1800)
     max_commands_per_session: int = Field(default=100, ge=1, le=1000)
+    allow_display_prefixes: list[str] = Field(default_factory=list)
+    deny_patterns: list[str] = Field(default_factory=list)
+
+
+class HCLRuntimeDiscoverySettings(BaseModel):
+    """HCL runtime discovery configuration."""
+
+    process_inspection: bool = True
+    log_observation: bool = True
+    loopback_probe: bool = True
+    console_host: str = "127.0.0.1"
+    fallback_telnet_base: int = Field(default=30000, ge=1024, le=65535)
+    max_probe_ports: int = Field(default=32, ge=1, le=256)
+
+
+class PrivateControlAPISettings(BaseModel):
+    """HCL private control API — disabled by default, requires H3C authorization."""
+
+    enabled: bool = False
+
+
+class HCLDiscoverySettings(BaseModel):
+    """HCL project discovery and runtime settings."""
+
+    projects_dirs: list[str] = Field(default_factory=list)
+    install_dir: str | None = None
+    supported_versions: list[str] = Field(default_factory=lambda: ["5.10.*"])
+    runtime_discovery: HCLRuntimeDiscoverySettings = Field(default_factory=HCLRuntimeDiscoverySettings)
+    private_control_api: PrivateControlAPISettings = Field(default_factory=PrivateControlAPISettings)
+
+
+class SSHSettings(BaseModel):
+    """SSH connection settings."""
+
+    username_env: str = "H3C_HCL_MCP_SSH_USERNAME"
+    password_env: str = "H3C_HCL_MCP_SSH_PASSWORD"
+    known_hosts: str = ""
+
+
+class DeviceSettings(BaseModel):
+    """Device transport and connection settings."""
+
+    preferred_transports: list[str] = Field(default_factory=lambda: ["console_telnet", "ssh"])
+    connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
+    command_timeout_seconds: int = Field(default=20, ge=1, le=300)
+    per_device_concurrency: int = Field(default=1, ge=1, le=8)
+    ssh: SSHSettings = Field(default_factory=SSHSettings)
+
+
+class AuditSettings(BaseModel):
+    """Audit trail configuration."""
+
+    enabled: bool = True
+    database: str = ""
+    retention_days: int = Field(default=90, ge=1, le=365)
+    store_raw_device_output: bool = False
+
+
+class HCLSettings(BaseModel):
+    """Root settings model — single configuration entry point."""
+
+    server: ServerSettings = Field(default_factory=ServerSettings)
+    hcl: HCLDiscoverySettings = Field(default_factory=HCLDiscoverySettings)
+    devices: DeviceSettings = Field(default_factory=DeviceSettings)
+    policy: PolicySettings = Field(default_factory=PolicySettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
 
 
 # ---------------------------------------------------------------------------
@@ -90,24 +166,31 @@ def _load_from_env() -> dict[str, Any]:
     """Extract settings from environment variables.
 
     Maps H3C_HCL_MCP__SERVER__NAME -> {"server": {"name": "..."}}
-    Supports up to 2 levels of nesting via double-underscore separator.
+    Supports arbitrary nesting via double-underscore separator.
+
+    Examples:
+      H3C_HCL_MCP__SERVER__LOG_LEVEL -> {"server": {"log_level": "INFO"}}
+      H3C_HCL_MCP__HCL__RUNTIME_DISCOVERY__CONSOLE_HOST ->
+        {"hcl": {"runtime_discovery": {"console_host": "..."}}}
     """
     result: dict[str, Any] = {}
     for key, value in os.environ.items():
         if not key.startswith(_ENV_PREFIX):
             continue
-        # Strip prefix and lowercase
-        stripped = key[len(_ENV_PREFIX) :].lower()
+        stripped = key[len(_ENV_PREFIX):].lower()
         parts = stripped.split("__")
-        if len(parts) == 1:
-            # Flat key: H3C_HCL_MCP__LOG_LEVEL
-            result[parts[0]] = _coerce_value(value)
-        elif len(parts) == 2:
-            # Nested key: H3C_HCL_MCP__SERVER__NAME
-            section, field = parts
-            if section not in result:
-                result[section] = {}
-            result[section][field] = _coerce_value(value)
+        # Navigate into nested dict, creating levels as needed
+        current = result
+        for part in parts[:-1]:
+            if part not in current:
+                current[part] = {}
+            elif not isinstance(current[part], dict):
+                # Value already set at a shallower level — skip
+                current = {}
+                break
+            current = current[part]
+        if current:
+            current[parts[-1]] = _coerce_value(value)
     return result
 
 
@@ -129,6 +212,110 @@ def _coerce_value(value: str) -> int | float | bool | str:
     except ValueError:
         pass
     return value
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Deep merge two dicts, with overlay values taking precedence.
+
+    Nested dicts are merged recursively. Lists and scalars from overlay
+    replace those in base.
+    """
+    result = dict(base)
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _load_file_strict(path: Path) -> dict[str, Any]:
+    """Load a YAML or JSON config file with strict error handling.
+
+    Args:
+        path: Path to the config file.
+
+    Returns:
+        Parsed configuration dict.
+
+    Raises:
+        SystemExit: If the file cannot be read, parsed, or has invalid content.
+    """
+    suffix = path.suffix.lower()
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, PermissionError) as e:
+        print(f"ERROR: Cannot read configuration file '{path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if suffix in (".yaml", ".yml"):
+        result = _parse_yaml_strict(raw, path)
+    elif suffix == ".json":
+        result = _parse_json_strict(raw, path)
+    else:
+        print(
+            f"ERROR: Unsupported configuration file format: '{path}'. "
+            "Use .yaml, .yml, or .json.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not isinstance(result, dict):
+        print(
+            f"ERROR: Configuration file '{path}' must contain a mapping (object) at the top level.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return result
+
+
+def _parse_yaml_strict(raw: str, path: Path) -> dict[str, Any]:
+    """Parse YAML content with clear error messages on failure."""
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        print(
+            "ERROR: YAML configuration requires the 'pyyaml' package. "
+            "Install with: pip install pyyaml  or  uv add pyyaml",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        data = yaml.safe_load(raw)
+    except Exception as e:
+        print(
+            f"ERROR: Failed to parse YAML configuration '{path}': {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if data is None:
+        return {}
+    return data
+
+
+def _parse_json_strict(raw: str, path: Path) -> dict[str, Any]:
+    """Parse JSON content with clear error messages on failure."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(
+            f"ERROR: Failed to parse JSON configuration '{path}': {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not isinstance(data, dict):
+        print(
+            f"ERROR: Configuration file '{path}' must contain a JSON object at the top level.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return data
 
 
 def _load_config_file(config_path: str | None = None) -> dict[str, Any]:
@@ -185,6 +372,88 @@ def _parse_yaml(raw: str) -> dict[str, Any]:
         return {}
     except Exception:
         return {}
+
+
+def _try_default_config() -> dict[str, Any] | None:
+    """Try to load configuration from default search paths.
+
+    Returns the parsed config dict if a file is found, None otherwise.
+    """
+    for path in _default_config_paths():
+        if path.exists():
+            return _load_file_strict(path)
+    return None
+
+
+def load_settings(
+    cli_args: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+) -> HCLSettings:
+    """Unified entry point for loading all settings.
+
+    Priority (highest to lowest):
+    1. CLI arguments
+    2. H3C_HCL_MCP__* environment variables
+    3. YAML/JSON config file
+    4. Model defaults
+
+    Args:
+        cli_args: Optional dict of CLI overrides (top priority).
+        config_path: Optional explicit path to a YAML or JSON config file.
+                     If omitted, searches default locations.
+
+    Returns:
+        Fully validated HCLSettings instance.
+
+    Raises:
+        SystemExit: On missing/malformed config, or unknown fields.
+    """
+    # --- Layer 3: Config file ---
+    if config_path is not None:
+        path = Path(config_path)
+        if not path.exists():
+            print(
+                f"ERROR: Configuration file not found: {path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        config_data = _load_file_strict(path)
+    else:
+        config_data = _try_default_config()
+        if config_data is None:
+            default_paths = _default_config_paths()
+            print(
+                "ERROR: No configuration file found.\n"
+                "Place a config.yaml or config.json in one of these locations:\n  "
+                + "\n  ".join(str(p) for p in default_paths)
+                + "\n\nOr use --config FILE to specify a path.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # --- Layer 2: Environment variables ---
+    merged = config_data
+    env_data = _load_from_env()
+    if env_data:
+        merged = _deep_merge(merged, env_data)
+
+    # --- Layer 1: CLI arguments (highest priority) ---
+    if cli_args:
+        merged = _deep_merge(merged, cli_args)
+
+    # --- Validate and return ---
+    try:
+        return HCLSettings(**merged)
+    except Exception as e:
+        errors = getattr(e, "errors", None)
+        if errors is not None:
+            for err in errors:
+                loc = " -> ".join(str(part) for part in err.get("loc", []))
+                msg = err.get("msg", str(err))
+                print(f"ERROR: Invalid configuration at '{loc}': {msg}", file=sys.stderr)
+        else:
+            print(f"ERROR: Invalid configuration: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def load_server_settings(
@@ -305,15 +574,11 @@ def load_settings_from_env() -> dict[str, object]:
 
 
 def _flatten_config(data: dict[str, object], prefix: str = "") -> dict[str, object]:
-    """Flatten nested config dict to a flat dict with underscore-separated keys.
-
-    {'hcl': {'projects_dirs': [...]}} → {'hcl_projects_dirs': [...]}
-    """
+    """Flatten nested config dict to a flat dict."""
     result: dict[str, object] = {}
     for key, value in data.items():
         flat_key = f"{prefix}_{key}" if prefix else key
         if isinstance(value, dict) and not any(isinstance(v, (list, dict)) for v in value.values()):
-            # This is a settings group — flatten it
             for sub_key, sub_value in value.items():
                 result[f"{key}_{sub_key}"] = sub_value
         elif isinstance(value, dict):
@@ -321,3 +586,37 @@ def _flatten_config(data: dict[str, object], prefix: str = "") -> dict[str, obje
         else:
             result[flat_key] = value
     return result
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep merge two dicts. override values take precedence."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def load_settings(
+    config_path: str | None = None,
+    cli_overrides: dict[str, Any] | None = None,
+) -> HCLSettings:
+    """Load settings from all sources. Priority: CLI > env > file > defaults."""
+    merged: dict[str, Any] = {}
+    # Layer 3: Config file
+    config_data = _load_config_file(config_path)
+    # Layer 2: Environment variables
+    env_data = _load_from_env()
+    merged = _deep_merge(config_data, env_data)
+    # Layer 1: CLI overrides
+    if cli_overrides:
+        merged = _deep_merge(merged, cli_overrides)
+    return HCLSettings(
+        server=ServerSettings(**merged.get("server", {})),
+        hcl=HCLDiscoverySettings(**merged.get("hcl", {})),
+        devices=DeviceSettings(**merged.get("devices", {})),
+        policy=PolicySettings(**merged.get("policy", {})),
+        audit=AuditSettings(**merged.get("audit", {})),
+    )
