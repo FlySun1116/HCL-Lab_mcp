@@ -23,6 +23,8 @@ Current source version: **v0.1.0-beta.2** (unreleased local beta).
   bounded loopback TCP/Telnet + Comware prompt probe.
 - `stdio` initialization, `tools/list`, `tools/call`, structured errors, and
   audit correlation are covered with the official MCP Python Client.
+- Claude Code 2.1.211 has connected to the Server from an isolated temporary
+  profile without modifying the user's real client configuration.
 - Claude Desktop and Cursor configuration examples are provided; a recorded
   UI-level smoke test for both clients remains a release-candidate exit check.
 - Console command execution is verified end to end with a fake Comware server.

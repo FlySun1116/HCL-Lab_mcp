@@ -118,6 +118,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 | Python 3.12 干净 wheel | 通过 | 独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.89s** |
 | Python 3.12 干净 sdist | 通过 | 第二个独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.47s** |
 | 制品内容策略 | 通过 | wheel 76 members、sdist 156 members；许可证/schema 存在，无危险扩展名、路径穿越或超大 tracked 文件 |
+| Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
 | `git diff --check` | 通过 | 无空白错误 |
 
 制品 stdio 场景在仓库外工作目录运行并清除 `PYTHONPATH`，精确断言 15 个 Tool、对全部公开 Tool 做最小调用，并验证本轮审计事件的非空过滤查询。
@@ -137,6 +138,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
 5. GitHub Actions 配置已补齐 wheel/sdist 独立安装门禁，但远端 workflow 和 `main` required-check/branch-protection 状态尚未在本地证明。
 6. GitHub 插件只读复核显示远端 `main` 没有 workflow run/status、仓库没有 PR；本地候选仍未推送。
+7. Claude Code 隔离连接已通过；Claude Desktop 和 Cursor 仍缺真实 UI 级连接记录，Cursor 的 `--add-mcp` 会写 profile 并启动 GUI，因此未在无授权情况下执行。
 
 ## 下一阶段任务
 

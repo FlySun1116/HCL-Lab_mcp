@@ -18,6 +18,7 @@
 | Python 包版本 | `0.1.0-beta.2`（PEP 440：`0.1.0b2`） |
 | MCP SDK | 官方 MCP Python SDK v1 稳定线（锁定 `<2`） |
 | MCP transport | `stdio` |
+| 实际 MCP Client | Claude Code 2.1.211 隔离临时 profile 已连接；Claude Desktop/Cursor UI 待测 |
 | 真实设备写操作 | 未执行；测试只允许 read-only |
 
 本机路径、用户名、真实项目名称、原始日志和设备配置均未写入本报告或测试 fixture。
@@ -39,6 +40,7 @@
 | beta.2 wheel/sdist | 通过 | `uv build --clear` 仅生成一个 `0.1.0b2` wheel 和一个 sdist |
 | Python 3.12 干净 wheel | 通过 | 独立环境安装；distribution/module/console entry point 版本一致；官方 stdio 7 passed in 8.89s |
 | Python 3.12 干净 sdist | 通过 | 第二个独立环境安装；distribution/module/console entry point 版本一致；官方 stdio 7 passed in 8.47s |
+| Claude Code 隔离连接 | 通过 | 2.1.211，临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 返回 `Connected`；未调用模型 API |
 | 公共 registry 安装 | 失败/未发布 | PyPI 不存在 beta.2，不能使用 `uvx h3c-hcl-mcp` |
 
 ## 第二阶段：MCP 协议
@@ -144,6 +146,7 @@ beta.2 注册 15 个 Tool：
 24. CI 已配置 active-v0.1 85% 覆盖率门禁，以及 wheel/sdist 两套独立安装 stdio smoke。
 25. Bug/Feature/Agent Task Issue 表单与 PR 模板已固化模块所有权、验收证据、安全边界和 Agent 交接要求。
 26. 所有第三方 GitHub Actions 已升级到当前 Node 24 版本并固定完整 commit SHA，避免可变 tag 与 Node 20 下线风险。
+27. Claude Code 2.1.211 使用隔离临时配置真实启动 stdio Server 并报告 `Connected`，没有污染用户配置或产生模型 API 调用。
 
 # 失败项
 
@@ -610,7 +613,7 @@ beta.2 注册 15 个 Tool：
 
 预期：两者均发现同一组 15 个 Tool，并能完成 `server_health`。
 
-实际：官方 MCP SDK 的真实 stdio 子进程黑盒通过，但本轮没有两种 GUI 客户端的可审计运行记录。
+实际：官方 MCP SDK 黑盒通过，Claude Code 2.1.211 隔离临时 profile 已报告 `Connected`；Claude Desktop 与 Cursor GUI 仍没有可审计运行记录。
 
 根因：客户端安装/运行状态属于用户桌面外部环境，自动化测试不能证明具体 UI 已配置。
 

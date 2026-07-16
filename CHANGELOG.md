@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Active-v0.1 line coverage is **86.83%** (3,646 statements, 480 missed), above the 85% hard gate.
 - `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
 - The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
+- Claude Code 2.1.211 reports the stdio Server as connected from an isolated temporary profile; Claude Desktop and Cursor UI smoke tests remain external release checks.
 - Synthetic parser, fake console, MCP protocol, validation, audit, configuration, redaction, timeout, and concurrency paths are automated.
 - A local HCL 5.10.3 project was parsed read-only, but the target project/devices were not running during the latest runtime check. Successful real-device `display version` and `display ip interface brief` remain release-candidate exit checks.
 - No tag, GitHub Release, or PyPI publication has been created for this candidate.
