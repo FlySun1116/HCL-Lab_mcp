@@ -4,8 +4,8 @@
 
 - 候选版本：`0.1.0-beta.2`（未发布）
 - 分支：`codex/beta2-release-candidate`
-- 当前实现提交：`fb5e758`
-- beta.2 集成状态：实现、测试和通用文档已形成本地集成 commit；本文件与测试报告作为后续验证记录提交
+- 当前实现提交：`56c1ef1`
+- beta.2 集成状态：源码门禁、覆盖率和 wheel/sdist 独立安装验收通过；真实运行 HCL 的两条只读命令和远端发布仍待外部条件/授权
 - 日期：2026-07-16
 - 发布状态：未创建 tag、GitHub Release 或 PyPI 包
 
@@ -57,6 +57,12 @@
 - connect/prompt/EOF/command-timeout/cancelled 失败都会关闭并失效连接，迟到输出不会污染下一次调用。
 - HCL 文件扫描和拓扑解析在线程中执行，不阻塞 stdio 事件循环；拓扑刷新会删除已从项目移除的旧 runtime 设备。
 - deep health 实际枚举项目，并对首个项目执行 runtime discovery。
+- `h3c_ping`/`h3c_trace_route` 使用严格的目标、次数和最大跳数 Schema，并输出结构化诊断摘要。
+- 最终 MCP `CallToolResult` 按 UTF-8 实际字节数执行硬上限；成功、错误、Schema、未知 Tool 和超时路径均受限，超限返回稳定 `OUTPUT_TOO_LARGE`。
+- 设备结果标记 `content_trust=untrusted_device_output`；结构化 parser 结果不再保留重复 raw 副本。
+- SNMP community、NTP authentication、RADIUS/HWTACACS shared key、`super password` 的 role/hash/cipher/simple 变体均在完整和快速路径强制脱敏。
+- project list cursor 已接入 repository 分页；恶意超长 Tool/project 标识在进入审计前受限。
+- 进程检查、日志加载移出事件循环；日志观察限制为最多 16 个文件、每文件最多 4 MiB，并显式关闭 SQLite、scandir 和测试 Telnet writer。
 
 ## 修改文件
 
@@ -82,7 +88,9 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## Git commits
 
+- `56c1ef1 fix: complete beta2 release hardening`（诊断、结果预算、脱敏、资源、覆盖率与双制品 CI）
 - `fb5e758 fix: complete beta2 runtime and MCP hardening`（beta.2 实现提交）
+- `f8e578b docs: record beta2 verification evidence`（上一轮验证文档）
 - `127acdb fix: BUG-002 real HCL parser + BUG-003 remove false positive + BUG-016 PyYAML`（前一基线）
 
 ## 执行的测试与精确结果
@@ -91,14 +99,19 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 | 检查 | 最终结果 | 说明 |
 |---|---|---|
-| `uv sync --locked --extra dev` | 通过 | 锁定 49 个包 |
+| `uv sync --locked --extra dev` | 通过 | 锁定 51 个包 |
 | `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
-| `uv run --locked ruff format --check .` | 通过 | 93 个文件格式合格 |
-| `uv run --locked mypy src` | 通过 | 68 个源文件无类型错误 |
-| `uv run --locked pytest` | 通过 | **489 passed in 19.34s**，Python 3.14.5 |
-| `uv build` | 通过 | 生成 `0.1.0b2` wheel 与 sdist；wheel 75 项并包含 `schema.sql` |
-| Python 3.12 干净 wheel | 通过 | Python 3.12.13，安装版本 `0.1.0b2`，官方 stdio **7 passed in 7.43s** |
+| `uv run --locked ruff format --check .` | 通过 | 101 个文件格式合格 |
+| `uv run --locked mypy src` | 通过 | 69 个源文件无类型错误 |
+| 严格 warning + coverage 全量测试 | 通过 | **628 passed in 57.82s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过 | **86.83%**；3,646 statements / 480 missed，门槛 85% |
+| `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
+| Python 3.12 干净 wheel | 通过 | 独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.89s** |
+| Python 3.12 干净 sdist | 通过 | 第二个独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.47s** |
+| 制品内容策略 | 通过 | wheel 76 members、sdist 151 members；许可证/schema 存在，无危险扩展名、路径穿越或超大 tracked 文件 |
 | `git diff --check` | 通过 | 无空白错误 |
+
+制品 stdio 场景在仓库外工作目录运行并清除 `PYTHONPATH`，精确断言 15 个 Tool、对全部公开 Tool 做最小调用，并验证本轮审计事件的非空过滤查询。
 
 真实 HCL 5.10.3 通过官方 `ClientSession` 子进程只读验证：发现 1 个项目、6 个设备、5 条链路，仅保留 2 个 S6850 H3C candidate；当时 running `0/6`、30001/30002 均关闭，两条 display 均稳定返回 `DEVICE_NOT_RUNNING`。
 
@@ -113,11 +126,12 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 2. beta.2 本地制品已构建但尚未发布 PyPI；文档和示例必须使用源码虚拟环境，不可宣称 `uvx h3c-hcl-mcp` 已可用。
 3. `h3c_diff_config`、Job 创建、SSH、NETCONF、HTTP 和所有写操作尚未实现。
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
+5. GitHub Actions 配置已补齐 wheel/sdist 独立安装门禁，但远端 workflow 和 `main` required-check/branch-protection 状态尚未在本地证明。
 
 ## 下一阶段任务
 
 1. 请维护者在 HCL GUI 打开目标项目并启动只读测试设备；只执行两条允许的 display 命令。
-2. beta.2 本地集成 commit、Secret/专有资产复核和制品门禁已完成；正向 HCL 证据通过后更新最终发布报告。
+2. beta.2 本地集成 commit、Secret/专有资产复核和双制品门禁完成后，等待正向 HCL 证据再更新最终发布报告。
 3. 正向 HCL 证据通过后给出公开发布决策；push、tag、Release、PyPI 仍需维护者授权。
 
 ## 接管所需命令
@@ -127,8 +141,8 @@ uv sync --extra dev
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
-uv run pytest
-uv build
+uv run pytest -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning --cov=h3c_hcl_mcp --cov-report=term-missing --cov-fail-under=85
+uv build --clear
 ```
 
 客户端从源码测试时，把 `command` 指向仓库 `.venv\Scripts\h3c-hcl-mcp.exe`，并用 `--projects-dir` 或 `%LOCALAPPDATA%\h3c-hcl-mcp\config.yaml` 指定项目目录。禁止把真实 HCL 文件、日志、配置或凭据复制进仓库。
