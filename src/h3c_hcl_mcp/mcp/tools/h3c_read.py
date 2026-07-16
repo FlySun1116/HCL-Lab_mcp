@@ -37,6 +37,16 @@ SafeDestination = Annotated[
         description="IPv4, IPv6, or hostname without whitespace or CLI options",
     ),
 ]
+ProjectId = Annotated[str, Field(min_length=1, max_length=256, description="HCL project identifier")]
+DeviceId = Annotated[int, Field(ge=0, le=2_147_483_647, description="HCL device identifier")]
+DisplayCommand = Annotated[
+    str,
+    Field(min_length=1, max_length=1024, description="One read-only Comware command line"),
+]
+CandidateConfig = Annotated[
+    str,
+    Field(max_length=65_536, description="Candidate configuration text reserved for v0.2"),
+]
 
 
 def _is_comware_candidate(model: str | None, category: str | None, version: str | None) -> bool:
@@ -156,7 +166,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             "when a verified runtime endpoint is available."
         ),
     )
-    async def h3c_list_devices(project_id: str) -> ToolResult:
+    async def h3c_list_devices(project_id: ProjectId) -> ToolResult:
         """List H3C/Comware candidates and their current operability.
 
         Args:
@@ -221,7 +231,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             "uptime, serial number, and hardware info from 'display version'."
         ),
     )
-    async def h3c_get_facts(project_id: str, device_id: int) -> ToolResult:
+    async def h3c_get_facts(project_id: ProjectId, device_id: DeviceId) -> ToolResult:
         """Get device facts for an H3C device.
 
         Args:
@@ -273,9 +283,9 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         ),
     )
     async def h3c_run_display(
-        project_id: str,
-        device_id: int,
-        command: str,
+        project_id: ProjectId,
+        device_id: DeviceId,
+        command: DisplayCommand,
         timeout: Annotated[int, Field(ge=1, le=120, description="Command timeout in seconds")] = (
             default_command_timeout
         ),
@@ -336,8 +346,8 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         ),
     )
     async def h3c_get_config(
-        project_id: str,
-        device_id: int,
+        project_id: ProjectId,
+        device_id: DeviceId,
         source: Literal["running", "startup"] = "running",
         redact: bool = True,
     ) -> ToolResult:
@@ -395,7 +405,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             "Returns interface name, link status, speed, and description for each interface."
         ),
     )
-    async def h3c_get_interfaces(project_id: str, device_id: int) -> ToolResult:
+    async def h3c_get_interfaces(project_id: ProjectId, device_id: DeviceId) -> ToolResult:
         """Get interface list for an H3C device.
 
         Args:
@@ -447,8 +457,8 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         ),
     )
     async def h3c_ping(
-        project_id: str,
-        device_id: int,
+        project_id: ProjectId,
+        device_id: DeviceId,
         destination: SafeDestination,
         count: Annotated[int, Field(ge=1, le=100, description="Number of ping packets")] = 5,
     ) -> ToolResult:
@@ -508,8 +518,8 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         ),
     )
     async def h3c_trace_route(
-        project_id: str,
-        device_id: int,
+        project_id: ProjectId,
+        device_id: DeviceId,
         destination: SafeDestination,
         max_hops: Annotated[int, Field(ge=1, le=255, description="Maximum number of hops")] = 30,
     ) -> ToolResult:
@@ -569,9 +579,9 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         ),
     )
     async def h3c_diff_config(
-        project_id: str,
-        device_id: int,
-        candidate: str = "",
+        project_id: ProjectId,
+        device_id: DeviceId,
+        candidate: CandidateConfig = "",
     ) -> ToolResult:
         """Compare device configuration against a candidate config.
 

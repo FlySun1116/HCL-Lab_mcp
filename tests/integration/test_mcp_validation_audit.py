@@ -50,6 +50,24 @@ class _MemoryAuditSink(AuditSink):
         return events[:limit]
 
 
+class _FailingAuditSink(AuditSink):
+    async def append(self, event: AuditEvent) -> None:
+        del event
+        raise OSError("synthetic audit failure")
+
+    async def query(
+        self,
+        request_id: str | None = None,
+        tool: str | None = None,
+        target_device: int | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditEvent]:
+        del request_id, tool, target_device, since, until, limit
+        return []
+
+
 async def _protocol_call(
     mcp: FastMCP,
     tool_name: str,
@@ -88,6 +106,43 @@ def _error_from_result(result: CallToolResult) -> dict[str, Any]:
     text = getattr(result.content[0], "text", None)
     assert isinstance(text, str)
     return json.loads(text[text.index("{") :])["error"]
+
+
+async def test_successful_tool_fails_closed_when_audit_append_is_unavailable() -> None:
+    server = FastMCP("audit-fail-closed-test")
+    audit_sink = _FailingAuditSink()
+
+    @server.tool(name="read_only_tool")
+    @with_audit("read_only_tool", audit_sink)
+    async def read_only_tool() -> ToolResult:
+        return ToolResult.success(request_id="req-audit-failure", data={"value": "read"})
+
+    wrap_call_tool_with_validation(server, audit_sink=audit_sink, max_output_bytes=1024)
+    result = await _protocol_call(server, "read_only_tool", {})
+
+    error = _error_from_result(result)
+    assert error["code"] == ErrorCode.INTERNAL_ERROR.value
+    assert error["reason"] == "AUDIT_UNAVAILABLE"
+    assert error["request_id"] == "req-audit-failure"
+    assert "synthetic audit failure" not in json.dumps(error)
+
+
+async def test_validation_failure_reports_audit_unavailable_when_append_fails() -> None:
+    server = FastMCP("validation-audit-fail-closed-test")
+    audit_sink = _FailingAuditSink()
+
+    @server.tool(name="validated_tool")
+    async def validated_tool(count: int) -> dict[str, int]:
+        return {"count": count}
+
+    wrap_call_tool_with_validation(server, audit_sink=audit_sink, max_output_bytes=1024)
+    result = await _protocol_call(server, "validated_tool", {"count": "invalid"})
+
+    error = _error_from_result(result)
+    assert error["code"] == ErrorCode.INTERNAL_ERROR.value
+    assert error["reason"] == "AUDIT_UNAVAILABLE"
+    assert isinstance(error["request_id"], str) and error["request_id"]
+    assert "synthetic audit failure" not in json.dumps(error)
 
 
 @pytest.mark.parametrize(

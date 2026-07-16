@@ -29,7 +29,7 @@ class ToolResult(BaseModel):
     truncated: bool = Field(default=False, description="Whether any public output was truncated")
     content_trust: Literal["trusted_server_data", "untrusted_device_output"] = Field(
         default="trusted_server_data",
-        description="Whether result content originates from untrusted device output",
+        description="Whether result content originates from untrusted external data",
     )
 
     @classmethod

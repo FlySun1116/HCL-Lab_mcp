@@ -71,6 +71,8 @@ jobs:
       - name: Run full suite with core coverage
         run: >-
           uv run --locked pytest -v
+          -W error::ResourceWarning
+          -W error::pytest.PytestUnraisableExceptionWarning
           --cov=h3c_hcl_mcp --cov-report=term-missing
           --cov-report=xml --cov-fail-under=85
       - name: Upload coverage report
@@ -93,7 +95,10 @@ jobs:
       - name: Install locked development environment
         run: uv sync --locked --extra dev
       - name: Run all tests
-        run: uv run --locked pytest -v
+        run: >-
+          uv run --locked pytest -v
+          -W error::ResourceWarning
+          -W error::pytest.PytestUnraisableExceptionWarning
 
   package:
     name: Build and clean-artifact stdio smoke (Windows)
@@ -109,6 +114,8 @@ jobs:
         run: uv sync --locked --extra dev
       - name: Build wheel and source distribution
         run: uv build --clear
+      - name: Enforce distribution content policy
+        run: uv run --locked python scripts/check_distribution.py dist
       - name: Install wheel in an independent environment and test stdio
         shell: pwsh
         run: |
@@ -120,21 +127,17 @@ jobs:
           $smokeVenv = Join-Path $env:RUNNER_TEMP "h3c-hcl-mcp-wheel-smoke"
           uv venv --python 3.12 $smokeVenv
 
-          $env:UV_PROJECT_ENVIRONMENT = $smokeVenv
-          uv sync --locked --no-dev --no-install-project
-
           $smokePython = Join-Path $smokeVenv "Scripts\python.exe"
           $smokeExecutable = Join-Path $smokeVenv "Scripts\h3c-hcl-mcp.exe"
-          uv pip install --python $smokePython --no-deps $wheels[0].FullName
+          uv pip install --python $smokePython $wheels[0].FullName
           & $smokePython -c "from importlib.metadata import version; from h3c_hcl_mcp.version import VERSION; assert version('h3c-hcl-mcp') == '0.1.0b2'; assert VERSION == '0.1.0-beta.2'"
           $versionOutput = & $smokeExecutable --version
           if ($LASTEXITCODE -ne 0 -or $versionOutput -ne "h3c-hcl-mcp v0.1.0-beta.2") {
             throw "Unexpected wheel entry-point version: $versionOutput"
           }
 
-          Remove-Item Env:UV_PROJECT_ENVIRONMENT
           $env:H3C_HCL_MCP_TEST_EXECUTABLE = $smokeExecutable
-          uv run --locked pytest tests/integration/test_stdio_client.py -v
+          uv run --locked pytest tests/integration/test_stdio_client.py -v -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning
 
       - name: Install source distribution in an independent environment and test stdio
         shell: pwsh
@@ -147,21 +150,17 @@ jobs:
           $smokeVenv = Join-Path $env:RUNNER_TEMP "h3c-hcl-mcp-sdist-smoke"
           uv venv --python 3.12 $smokeVenv
 
-          $env:UV_PROJECT_ENVIRONMENT = $smokeVenv
-          uv sync --locked --no-dev --no-install-project
-
           $smokePython = Join-Path $smokeVenv "Scripts\python.exe"
           $smokeExecutable = Join-Path $smokeVenv "Scripts\h3c-hcl-mcp.exe"
-          uv pip install --python $smokePython --no-deps $sdists[0].FullName
+          uv pip install --python $smokePython $sdists[0].FullName
           & $smokePython -c "from importlib.metadata import version; from h3c_hcl_mcp.version import VERSION; assert version('h3c-hcl-mcp') == '0.1.0b2'; assert VERSION == '0.1.0-beta.2'"
           $versionOutput = & $smokeExecutable --version
           if ($LASTEXITCODE -ne 0 -or $versionOutput -ne "h3c-hcl-mcp v0.1.0-beta.2") {
             throw "Unexpected sdist entry-point version: $versionOutput"
           }
 
-          Remove-Item Env:UV_PROJECT_ENVIRONMENT
           $env:H3C_HCL_MCP_TEST_EXECUTABLE = $smokeExecutable
-          uv run --locked pytest tests/integration/test_stdio_client.py -v
+          uv run --locked pytest tests/integration/test_stdio_client.py -v -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning
 
   security:
     name: Secret scan

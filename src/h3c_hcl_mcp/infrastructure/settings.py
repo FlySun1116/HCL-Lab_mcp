@@ -11,6 +11,7 @@ All settings are validated via Pydantic models.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import sys
@@ -125,6 +126,21 @@ class HCLRuntimeDiscoverySettings(BaseModel):
     fallback_telnet_base: int = Field(default=30000, ge=1024, le=65535)
     max_probe_ports: int = Field(default=32, ge=1, le=256)
 
+    @field_validator("console_host")
+    @classmethod
+    def _require_loopback_console_host(cls, value: str) -> str:
+        """Keep the v0.1 plaintext console transport on the local machine."""
+        normalized = value.strip()
+        if normalized.casefold() == "localhost":
+            return normalized
+        try:
+            is_loopback = ipaddress.ip_address(normalized).is_loopback
+        except ValueError:
+            is_loopback = False
+        if not is_loopback:
+            raise ValueError("console_host must be a loopback address in v0.1")
+        return normalized
+
 
 class PrivateControlAPISettings(BaseModel):
     """HCL private control API — disabled by default, requires H3C authorization."""
@@ -178,7 +194,7 @@ class DeviceSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    preferred_transports: list[str] = Field(default_factory=lambda: ["console_telnet", "ssh"])
+    preferred_transports: list[str] = Field(default_factory=lambda: ["console_telnet"])
     connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
     command_timeout_seconds: int = Field(default=20, ge=1, le=300)
     per_device_concurrency: int = Field(default=1, ge=1, le=8)

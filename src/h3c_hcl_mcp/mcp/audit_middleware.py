@@ -6,6 +6,7 @@ successful and failed calls.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -16,9 +17,9 @@ from typing import Any
 from mcp.server.fastmcp.exceptions import ToolError
 
 from h3c_hcl_mcp.domain.audit import AuditEvent
-from h3c_hcl_mcp.domain.errors import DomainError
+from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.result import ToolResult
-from h3c_hcl_mcp.mcp.error_mapping import extract_structured_error
+from h3c_hcl_mcp.mcp.error_mapping import extract_structured_error, structured_error_payload
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
 
 logger = logging.getLogger(__name__)
@@ -115,10 +116,12 @@ def with_audit(
                             error_code=error_code,
                         )
                         await audit_sink.append(event)
-                    except Exception as e:
-                        # Audit failure must not break the tool, but it must remain
-                        # observable to operators instead of being silently lost.
-                        logger.warning("Failed to append audit event for %s: %s", tool_name, e)
+                    except Exception as error:
+                        # Auditing is a declared v0.1 invariant. A read-only
+                        # result must not be reported as successful when its
+                        # append-only evidence could not be persisted.
+                        logger.error("Failed to append audit event for %s: %s", tool_name, error)
+                        raise _audit_unavailable_error(request_id) from None
 
         return wrapper
 
@@ -167,3 +170,16 @@ def _policy_result_for_error(error_code: str) -> str:
     if error_code in _POLICY_ERROR_CODES:
         return "denied"
     return "not_evaluated"
+
+
+def _audit_unavailable_error(request_id: str) -> ToolError:
+    payload = structured_error_payload(
+        code=ErrorCode.INTERNAL_ERROR.value,
+        message="Audit trail is unavailable",
+        request_id=request_id,
+        details={
+            "reason": "AUDIT_UNAVAILABLE",
+            "next_action": "Restore the configured audit database, then retry.",
+        },
+    )
+    return ToolError(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))

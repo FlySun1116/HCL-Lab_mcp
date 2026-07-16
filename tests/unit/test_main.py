@@ -13,7 +13,8 @@ import pytest
 import h3c_hcl_mcp.__main__ as cli
 import h3c_hcl_mcp.infrastructure.logging as logging_module
 import h3c_hcl_mcp.infrastructure.settings as settings_module
-from h3c_hcl_mcp.mcp.server import SERVER_NAME
+from h3c_hcl_mcp.adapters.comware.session_manager import DeviceSessionManager
+from h3c_hcl_mcp.mcp.server import SERVER_NAME, create_server
 from h3c_hcl_mcp.version import VERSION
 
 
@@ -168,3 +169,21 @@ def test_main_propagates_stdio_runtime_error(
     assert exc_info.value is expected
     assert captured.out == ""
     assert captured.err.strip() == f"test-mcp v{VERSION} -- starting stdio server..."
+
+
+async def test_server_lifespan_closes_all_device_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_calls = 0
+
+    async def tracked_close_all(self: DeviceSessionManager) -> None:
+        nonlocal close_calls
+        close_calls += 1
+
+    monkeypatch.setattr(DeviceSessionManager, "close_all", tracked_close_all)
+    server = create_server()
+
+    async with server._mcp_server.lifespan(server._mcp_server):
+        assert close_calls == 0
+
+    assert close_calls == 1

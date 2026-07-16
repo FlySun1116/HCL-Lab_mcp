@@ -107,6 +107,25 @@ def test_setup_logging_silences_known_third_party_loggers(
     assert all(logging.getLogger(name).level == logging.WARNING for name in _THIRD_PARTY_LOGGERS)
 
 
+def test_setup_logging_bounds_client_controlled_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO")
+
+    secret_tail = "SHOULD_NOT_REACH_THE_LOG"
+    logging.getLogger("mcp.server.lowlevel.server").warning(
+        "Tool '%s' not listed",
+        "x" * 20_000 + secret_tail,
+    )
+
+    output = stream.getvalue()
+    assert secret_tail not in output
+    assert "…' not listed" in output
+    assert len(output) < 2_000
+
+
 def test_get_logger_returns_named_standard_logger() -> None:
     logger = logging_module.get_logger("h3c_hcl_mcp.tests")
 

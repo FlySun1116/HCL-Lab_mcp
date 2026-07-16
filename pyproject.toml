@@ -48,6 +48,19 @@ Issues = "https://github.com/FlySun1116/HCL-Lab_mcp/issues"
 [project.scripts]
 h3c-hcl-mcp = "h3c_hcl_mcp.__main__:main"
 
+[tool.hatch.build]
+exclude = [
+    "/.agents",
+    "/.claude",
+    "/.codex",
+    "/.git",
+    "/.mypy_cache",
+    "/.pytest_cache",
+    "/.ruff_cache",
+    "/.venv",
+    "/dist",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/h3c_hcl_mcp"]
 

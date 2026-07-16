@@ -90,6 +90,7 @@ def test_runtime_tool_returns_devices_endpoints_and_counts() -> None:
     assert result["ok"] is True
     assert result["data"]["total_count"] == 2
     assert result["data"]["running_count"] == 1
+    assert result["content_trust"] == "untrusted_device_output"
     running = result["data"]["devices"][0]
     assert running["console_available"] is True
     assert running["endpoints"][0] == {

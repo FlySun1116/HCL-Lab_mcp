@@ -8,6 +8,7 @@ and graceful disconnect.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import time
 
 from h3c_hcl_mcp.adapters.comware.base import (
@@ -23,7 +24,7 @@ from h3c_hcl_mcp.domain.command import (
     CommandResult,
     CommandType,
 )
-from h3c_hcl_mcp.domain.device import RuntimeEndpoint
+from h3c_hcl_mcp.domain.device import RuntimeEndpoint, TransportType
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.ports.device_transport import DeviceTransport
 
@@ -44,6 +45,62 @@ _READ_CHUNK = 4096
 
 # How long to poll for more data when buffer is quiet (seconds)
 _IDLE_POLL_INTERVAL = 0.1
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Return whether a console host is local-only."""
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+class _TelnetIACFilter:
+    """Incrementally remove Telnet negotiation across arbitrary TCP chunks."""
+
+    _DATA = 0
+    _IAC = 1
+    _OPTION = 2
+    _SUBNEGOTIATION = 3
+    _SUBNEGOTIATION_IAC = 4
+
+    def __init__(self) -> None:
+        self._state = self._DATA
+
+    def reset(self) -> None:
+        self._state = self._DATA
+
+    def feed(self, data: bytes) -> bytes:
+        result = bytearray()
+        for byte in data:
+            if self._state == self._DATA:
+                if byte == _IAC:
+                    self._state = self._IAC
+                else:
+                    result.append(byte)
+            elif self._state == self._IAC:
+                if byte == _IAC:
+                    result.append(_IAC)
+                    self._state = self._DATA
+                elif byte in {_WILL, _WONT, _DO, _DONT}:
+                    self._state = self._OPTION
+                elif byte == _SB:
+                    self._state = self._SUBNEGOTIATION
+                else:
+                    self._state = self._DATA
+            elif self._state == self._OPTION:
+                self._state = self._DATA
+            elif self._state == self._SUBNEGOTIATION:
+                if byte == _IAC:
+                    self._state = self._SUBNEGOTIATION_IAC
+            elif self._state == self._SUBNEGOTIATION_IAC:
+                if byte == _SE:
+                    self._state = self._DATA
+                else:
+                    self._state = self._SUBNEGOTIATION
+        return bytes(result)
 
 
 class ConsoleTelnetTransport(DeviceTransport):
@@ -69,6 +126,7 @@ class ConsoleTelnetTransport(DeviceTransport):
         self._writer: asyncio.StreamWriter | None = None
         self._current_prompt: str | None = None
         self._connected = False
+        self._iac_filter = _TelnetIACFilter()
 
     # ---- DeviceTransport implementation ----
 
@@ -82,7 +140,19 @@ class ConsoleTelnetTransport(DeviceTransport):
             DomainError(CONNECTION_FAILED): TCP connection failed.
             DomainError(PROMPT_TIMEOUT): No CLI prompt received in time.
         """
+        if endpoint.transport != TransportType.CONSOLE_TELNET:
+            raise DomainError(
+                ErrorCode.INVALID_ARGUMENT,
+                "Console Telnet transport cannot open a non-console endpoint",
+            )
+        if not _is_loopback_host(endpoint.host):
+            raise DomainError(
+                ErrorCode.INVALID_ARGUMENT,
+                "Console Telnet endpoint must use a loopback host in v0.1",
+            )
+
         self._session.state = SessionState.CONNECTING
+        self._iac_filter.reset()
 
         try:
             self._reader, self._writer = await asyncio.wait_for(
@@ -124,6 +194,7 @@ class ConsoleTelnetTransport(DeviceTransport):
 
         self._session.state = SessionState.READY
         self._session.reset_reconnect()
+        self._session.touch()
 
     async def execute(self, request: CommandRequest) -> CommandResult:
         """Execute a single CLI command and collect the output.
@@ -226,6 +297,9 @@ class ConsoleTelnetTransport(DeviceTransport):
             else:
                 self._session.state = SessionState.READY
 
+            self._session.command_count += 1
+            self._session.touch()
+
             return CommandResult(
                 target=request.target,
                 command=request.command,
@@ -299,7 +373,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                 )
 
             # Filter IAC sequences from the data stream
-            clean = _filter_iac(data)
+            clean = self._iac_filter.feed(data)
             if clean:
                 buffer += clean.decode("ascii", errors="replace")
 
@@ -353,7 +427,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                                 timeout=min(1.0, remaining),
                             )
                             if data:
-                                clean = _filter_iac(data)
+                                clean = self._iac_filter.feed(data)
                                 if clean:
                                     buffer += clean.decode("ascii", errors="replace")
                                     continue
@@ -369,7 +443,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                     {"device_id": self._session.device_id},
                 )
 
-            clean = _filter_iac(data)
+            clean = self._iac_filter.feed(data)
             if clean:
                 buffer += clean.decode("ascii", errors="replace")
 
@@ -394,7 +468,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                             timeout=min(0.3, remaining),
                         )
                         if more_data:
-                            clean_more = _filter_iac(more_data)
+                            clean_more = self._iac_filter.feed(more_data)
                             if clean_more:
                                 extra = clean_more.decode("ascii", errors="replace")
                                 # If the extra data is only a prompt (server's
@@ -440,50 +514,7 @@ def _filter_iac(data: bytes) -> bytes:
 
     Returns the data portion only (non-IAC bytes).
     """
-    if _IAC not in data:
-        return data
-
-    result = bytearray()
-    i = 0
-    n = len(data)
-
-    while i < n:
-        b = data[i]
-        if b != _IAC:
-            result.append(b)
-            i += 1
-            continue
-
-        # Peek at next byte
-        if i + 1 >= n:
-            # IAC at end of buffer — discard (incomplete command)
-            break
-
-        cmd = data[i + 1]
-
-        if cmd == _IAC:
-            # Escaped IAC — literal 0xFF in data stream
-            result.append(_IAC)
-            i += 2
-        elif cmd in (_WILL, _WONT, _DO, _DONT):
-            # 3-byte command: IAC <cmd> <option>
-            i += 3
-        elif cmd == _SB:
-            # Sub-negotiation: scan for IAC SE
-            i += 2  # skip IAC SB
-            while i + 1 < n:
-                if data[i] == _IAC and data[i + 1] == _SE:
-                    i += 2
-                    break
-                i += 1
-            else:
-                # Unterminated SB — skip rest
-                i = n
-        else:
-            # Unknown IAC command — skip 2 bytes
-            i += 2
-
-    return bytes(result)
+    return _TelnetIACFilter().feed(data)
 
 
 def _send_iac_response(writer: asyncio.StreamWriter, cmd: int, option: int) -> None:

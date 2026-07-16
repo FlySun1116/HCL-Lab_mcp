@@ -12,6 +12,7 @@ from h3c_hcl_mcp.infrastructure.settings import (
     AuditSettings,
     DeviceSettings,
     HCLDiscoverySettings,
+    HCLRuntimeDiscoverySettings,
     HCLSettings,
     PolicyMode,
     PolicySettings,
@@ -81,6 +82,14 @@ class TestHCLDiscoverySettings:
         assert rd.fallback_telnet_base == 30000
         assert rd.max_probe_ports == 32
 
+    @pytest.mark.parametrize("host", ["localhost", "127.0.0.2", "::1"])
+    def test_runtime_discovery_accepts_only_loopback_hosts(self, host: str) -> None:
+        assert HCLRuntimeDiscoverySettings(console_host=host).console_host == host
+
+    def test_runtime_discovery_rejects_non_loopback_host(self) -> None:
+        with pytest.raises(ValidationError, match="console_host must be a loopback"):
+            HCLRuntimeDiscoverySettings(console_host="10.0.0.1")
+
     def test_projects_dirs_from_list(self) -> None:
         s = HCLDiscoverySettings(projects_dirs=["/a", "/b"])
         assert s.projects_dirs == ["/a", "/b"]
@@ -111,7 +120,7 @@ class TestHCLDiscoverySettings:
 class TestDeviceSettings:
     def test_defaults(self) -> None:
         s = DeviceSettings()
-        assert s.preferred_transports == ["console_telnet", "ssh"]
+        assert s.preferred_transports == ["console_telnet"]
         assert s.connect_timeout_seconds == 5
         assert s.command_timeout_seconds == 20
         assert s.per_device_concurrency == 1
@@ -336,10 +345,10 @@ class TestEnvVarOverride:
         """Deeply nested env vars should work."""
         config = tmp_path / "config.yaml"
         config.write_text("server:\n  log_level: INFO\n")
-        monkeypatch.setenv("H3C_HCL_MCP__HCL__RUNTIME_DISCOVERY__CONSOLE_HOST", "10.0.0.1")
+        monkeypatch.setenv("H3C_HCL_MCP__HCL__RUNTIME_DISCOVERY__CONSOLE_HOST", "::1")
         monkeypatch.setenv("H3C_HCL_MCP__HCL__RUNTIME_DISCOVERY__FALLBACK_TELNET_BASE", "40000")
         settings = load_settings(config_path=str(config))
-        assert settings.hcl.runtime_discovery.console_host == "10.0.0.1"
+        assert settings.hcl.runtime_discovery.console_host == "::1"
         assert settings.hcl.runtime_discovery.fallback_telnet_base == 40000
 
     def test_env_boolean_coercion(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

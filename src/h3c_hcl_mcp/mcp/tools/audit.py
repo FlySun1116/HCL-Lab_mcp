@@ -34,11 +34,11 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         ),
     )
     async def audit_query(
-        request_id: str = "",
-        tool: str = "",
+        request_id: Annotated[str, Field(max_length=128)] = "",
+        tool: Annotated[str, Field(max_length=256)] = "",
         target_device: Annotated[int, Field(ge=0, description="Target device ID")] = 0,
-        since: str = "",
-        until: str = "",
+        since: Annotated[str, Field(max_length=64)] = "",
+        until: Annotated[str, Field(max_length=64)] = "",
         limit: Annotated[int, Field(ge=1, le=500, description="Maximum events")] = 100,
     ) -> ToolResult:
         """Query audit events with optional filters.

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -264,6 +266,9 @@ def create_server(
     cmd_parser: CommandParser = _CompositeCommandParser()
     session_manager = DeviceSessionManager(
         connect_timeout_seconds=settings.devices.connect_timeout_seconds,
+        max_sessions=settings.policy.max_concurrent_sessions,
+        idle_timeout_seconds=settings.policy.session_timeout_seconds,
+        max_commands_per_session=settings.policy.max_commands_per_session,
     )
     device_transport: DeviceTransport = SessionManagerTransport(session_manager)
 
@@ -288,6 +293,13 @@ def create_server(
     }
 
     # --- Create the MCP server ---
+    @asynccontextmanager
+    async def server_lifespan(_: FastMCP) -> AsyncIterator[None]:
+        try:
+            yield None
+        finally:
+            await session_manager.close_all()
+
     mcp = FastMCP(
         name=settings.server.name,
         instructions=(
@@ -296,6 +308,7 @@ def create_server(
             "v0.1 supports read-only operations: project listing, topology, "
             "runtime state, and Comware CLI display/diagnostic commands."
         ),
+        lifespan=server_lifespan,
     )
 
     # Set serverInfo.version for MCP initialize response

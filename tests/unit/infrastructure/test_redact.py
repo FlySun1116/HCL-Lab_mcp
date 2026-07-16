@@ -228,6 +228,44 @@ class TestKeyRedaction:
         text = "pre-shared-key simple vpnsecret123"
         result = redact_sensitive(text)
         assert "vpnsecret123" not in result
+
+    @pytest.mark.parametrize("redactor", [redact_sensitive, quick_redact])
+    @pytest.mark.parametrize(
+        ("text", "secret", "expected"),
+        [
+            (
+                "key-string cipher KEYCHAIN_SECRET",
+                "KEYCHAIN_SECRET",
+                "key-string *** REDACTED ***",
+            ),
+            (
+                "wep key 1 wep40 pass-phrase cipher WEP_SECRET",
+                "WEP_SECRET",
+                "wep key *** REDACTED ***",
+            ),
+            (
+                "preshared-key pass-phrase cipher WLAN_SECRET",
+                "WLAN_SECRET",
+                "preshared-key *** REDACTED ***",
+            ),
+            (
+                "pre-shared-key cipher IPSEC_SECRET",
+                "IPSEC_SECRET",
+                "preshared-key *** REDACTED ***",
+            ),
+        ],
+    )
+    def test_comware_key_families_are_fully_redacted(
+        self,
+        redactor,
+        text: str,
+        secret: str,
+        expected: str,
+    ) -> None:
+        result = redactor(text)
+
+        assert secret not in result
+        assert result == expected
         assert "***" in result
 
     def test_authentication_key(self) -> None:

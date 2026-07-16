@@ -27,6 +27,7 @@ class DeviceSession:
     state: SessionState = SessionState.DISCONNECTED
     last_active: float = field(default_factory=time.monotonic)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    command_count: int = 0
     _reconnect_attempts: int = field(default=0, repr=False)
 
     # ---- State queries ----
@@ -53,3 +54,4 @@ class DeviceSession:
     def reset_reconnect(self) -> None:
         """Reset the reconnect counter after a successful connection."""
         self._reconnect_attempts = 0
+        self.command_count = 0

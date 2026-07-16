@@ -60,6 +60,7 @@ class TestHCLProjects:
         _, data = _call(server, "hcl_list_projects")
         assert data["ok"] is True
         assert isinstance(data["data"]["projects"], list)
+        assert data["content_trust"] == "untrusted_device_output"
 
     def test_list_does_not_expose_local_project_paths(self, synthetic_projects_dir):
         server = create_server(hcl_projects_dirs=[str(synthetic_projects_dir)])
@@ -103,6 +104,7 @@ class TestHCLProjects:
 
         assert data["data"]["devices"]
         assert all("config_path" not in device for device in data["data"]["devices"])
+        assert data["content_trust"] == "untrusted_device_output"
 
     def test_damaged_project_error_does_not_expose_local_path(self, synthetic_projects_dir):
         server = create_server(hcl_projects_dirs=[str(synthetic_projects_dir)])
@@ -309,8 +311,31 @@ class TestToolCount:
         tools = asyncio.run(server.list_tools())
         run_display = next(tool for tool in tools if tool.name == "h3c_run_display")
         timeout_schema = run_display.inputSchema["properties"]["timeout"]
+        command_schema = run_display.inputSchema["properties"]["command"]
+        project_schema = run_display.inputSchema["properties"]["project_id"]
         assert timeout_schema["default"] == 120
         assert timeout_schema["default"] <= timeout_schema["maximum"]
+        assert command_schema["maxLength"] == 1024
+        assert project_schema["maxLength"] == 256
+
+    def test_run_display_rejects_oversized_command_before_device_lookup(self):
+        server = create_server()
+
+        with pytest.raises(ToolError) as exc:
+            _call(
+                server,
+                "h3c_run_display",
+                {
+                    "project_id": "missing",
+                    "device_id": 1,
+                    "command": "display version " + "A" * 2_000,
+                },
+            )
+
+        error_data = _get_tool_error_json(exc.value)
+        assert error_data["error"]["code"] == "INVALID_ARGUMENT"
+        assert error_data["error"]["fields"][0]["field"] == "command"
+        assert error_data["error"]["fields"][0]["maxLength"] == 1024
 
     @pytest.mark.parametrize("tool_name", ["h3c_ping", "h3c_trace_route"])
     def test_diagnostic_destination_schema_rejects_cli_arguments(self, tool_name: str):

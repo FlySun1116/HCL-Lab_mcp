@@ -28,6 +28,15 @@ _AAA_KEY_LINE = re.compile(
 _SUPER_PASSWORD_LINE = re.compile(
     r"(?im)^[ \t]*super[ \t]+password\b[^\r\n]*$",
 )
+_KEY_STRING_LINE = re.compile(
+    r"(?im)^[ \t]*key-string\b[^\r\n]*$",
+)
+_WEP_KEY_LINE = re.compile(
+    r"(?im)^[ \t]*wep[ \t]+key\b[^\r\n]*$",
+)
+_PRESHARED_KEY_LINE = re.compile(
+    r"(?im)^[ \t]*(?:pre-shared-key|preshared-key)\b[^\r\n]*$",
+)
 
 
 REDACT_PATTERNS: list[tuple[Pattern[str], str]] = [
@@ -50,6 +59,9 @@ REDACT_PATTERNS: list[tuple[Pattern[str], str]] = [
     (_NTP_AUTHENTICATION_LINE, "ntp-service authentication-keyid *** REDACTED ***"),
     (_AAA_KEY_LINE, "key authentication/accounting *** REDACTED ***"),
     (_SUPER_PASSWORD_LINE, "super password *** REDACTED ***"),
+    (_KEY_STRING_LINE, "key-string *** REDACTED ***"),
+    (_WEP_KEY_LINE, "wep key *** REDACTED ***"),
+    (_PRESHARED_KEY_LINE, "preshared-key *** REDACTED ***"),
     # Local-user lines must run before the generic password rule so both the
     # username and its credential are removed.
     (
@@ -113,6 +125,9 @@ def quick_redact(text: str) -> str:
         (_NTP_AUTHENTICATION_LINE, "ntp-service authentication-keyid *** REDACTED ***"),
         (_AAA_KEY_LINE, "key authentication/accounting *** REDACTED ***"),
         (_SUPER_PASSWORD_LINE, "super password *** REDACTED ***"),
+        (_KEY_STRING_LINE, "key-string *** REDACTED ***"),
+        (_WEP_KEY_LINE, "wep key *** REDACTED ***"),
+        (_PRESHARED_KEY_LINE, "preshared-key *** REDACTED ***"),
         (
             re.compile(r"(?i)local-user\s+\S+\s+password\s+(?:simple|cipher|hash)?\s*\S+"),
             "local-user *** password ***",

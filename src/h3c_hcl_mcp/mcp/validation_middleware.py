@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from h3c_hcl_mcp.domain.audit import AuditEvent
 from h3c_hcl_mcp.domain.errors import ErrorCode
-from h3c_hcl_mcp.mcp.audit_middleware import _extract_target
+from h3c_hcl_mcp.mcp.audit_middleware import _audit_unavailable_error, _extract_target
 from h3c_hcl_mcp.mcp.error_mapping import extract_structured_error, structured_error_payload
 from h3c_hcl_mcp.mcp.output_budget import (
     OutputBudgetExceeded,
@@ -70,7 +70,7 @@ def wrap_call_tool_with_validation(
                 code=ErrorCode.INVALID_ARGUMENT.value,
                 message="Unknown tool",
                 request_id=request_id,
-                details={"tool": name},
+                details={"tool": _bounded_tool_name(name)},
             )
             if audit_sink is not None:
                 await _audit_invalid_call(
@@ -256,11 +256,7 @@ async def _audit_invalid_call(
                 event_id=str(uuid.uuid4()),
                 request_id=request_id,
                 caller="mcp-client",
-                tool=(
-                    tool_name
-                    if len(tool_name) <= _MAX_AUDIT_TOOL_NAME_CHARS
-                    else tool_name[: _MAX_AUDIT_TOOL_NAME_CHARS - 1] + "…"
-                ),
+                tool=(_bounded_tool_name(tool_name)),
                 target=_extract_target(arguments),
                 policy_result="not_evaluated",
                 outcome="error",
@@ -269,4 +265,11 @@ async def _audit_invalid_call(
             )
         )
     except Exception as error:
-        logger.warning("Failed to audit validation error for %s: %s", tool_name, error)
+        logger.error("Failed to audit validation error for %s: %s", tool_name, error)
+        raise _audit_unavailable_error(request_id) from None
+
+
+def _bounded_tool_name(tool_name: str) -> str:
+    if len(tool_name) <= _MAX_AUDIT_TOOL_NAME_CHARS:
+        return tool_name
+    return tool_name[: _MAX_AUDIT_TOOL_NAME_CHARS - 1] + "…"

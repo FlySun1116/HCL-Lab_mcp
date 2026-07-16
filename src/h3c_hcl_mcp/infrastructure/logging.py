@@ -10,6 +10,8 @@ import logging
 import sys
 from typing import Any
 
+_MAX_LOG_ARGUMENT_CHARS = 1024
+
 
 def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
     """Configure logging to stderr for the MCP server process.
@@ -30,6 +32,7 @@ def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
     root.handlers.clear()
 
     handler = logging.StreamHandler(sys.stderr)
+    handler.addFilter(_BoundedLogArgumentsFilter())
 
     formatter: logging.Formatter
     if format_json:
@@ -81,6 +84,23 @@ class _JSONFormatter(logging.Formatter):
         if record.exc_info and record.exc_info[1]:
             log_entry["exception"] = str(record.exc_info[1])
         return json.dumps(log_entry, ensure_ascii=False)
+
+
+class _BoundedLogArgumentsFilter(logging.Filter):
+    """Bound client-controlled string arguments before formatter expansion."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(_bounded_log_argument(value) for value in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {key: _bounded_log_argument(value) for key, value in record.args.items()}
+        return True
+
+
+def _bounded_log_argument(value: object) -> object:
+    if not isinstance(value, str) or len(value) <= _MAX_LOG_ARGUMENT_CHARS:
+        return value
+    return value[: _MAX_LOG_ARGUMENT_CHARS - 1] + "…"
 
 
 def get_logger(name: str) -> logging.Logger:

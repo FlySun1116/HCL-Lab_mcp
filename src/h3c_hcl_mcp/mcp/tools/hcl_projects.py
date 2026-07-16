@@ -85,6 +85,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 request_id=request_id,
                 data=data,
                 duration_ms=round(duration_ms, 2),
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:
@@ -99,7 +100,9 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             "Returns structured device references and inter-device connections."
         ),
     )
-    async def hcl_get_topology(project_id: str) -> ToolResult:
+    async def hcl_get_topology(
+        project_id: Annotated[str, Field(min_length=1, max_length=256)],
+    ) -> ToolResult:
         """Get the full topology for an HCL project.
 
         Args:
@@ -127,6 +130,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 target={"project_id": project_id},
                 warnings=topology.warnings,
                 duration_ms=round(duration_ms, 2),
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:

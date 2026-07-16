@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from h3c_hcl_mcp.domain.errors import DomainError
 from h3c_hcl_mcp.domain.result import ToolResult
@@ -31,7 +32,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             "bulk config collection, or batch commands."
         ),
     )
-    async def job_get(job_id: str) -> ToolResult:
+    async def job_get(job_id: Annotated[str, Field(min_length=1, max_length=128)]) -> ToolResult:
         """Get the status of an asynchronous job.
 
         Args:
@@ -63,7 +64,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             "Returns whether the cancellation was successful."
         ),
     )
-    async def job_cancel(job_id: str) -> ToolResult:
+    async def job_cancel(job_id: Annotated[str, Field(min_length=1, max_length=128)]) -> ToolResult:
         """Cancel an asynchronous job.
 
         Args:
