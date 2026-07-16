@@ -140,27 +140,15 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
             seen_devices.add(device_id)
             device_name = f"Device_{device_id}"
 
-            # Auto-detect state when HCL is running and no explicit state set
+            # HCL process detection tells us HCL is running, but NOT which
+            # devices are running. Formula-based ports are candidates that
+            # need probe+prompt verification before becoming usable endpoints.
             if state == DeviceState.UNKNOWN and hcl_running:
-                effective_state = DeviceState.RUNNING
-                if not endpoints:
-                    # Generate formula-based candidate endpoint
-                    port = self._fallback_telnet_base + device_id
-                    candidate = RuntimeEndpoint(
-                        transport=TransportType.CONSOLE_TELNET,
-                        host=self._console_host,
-                        port=port,
-                        source=DiscoverySource.FORMULA,
-                        confidence=0.5,
-                        discovered_at=datetime.now(tz=UTC),
-                        extra={
-                            "project_id": project_id,
-                            "device_id": str(device_id),
-                        },
-                    )
-                    effective_endpoints = [candidate]
-                else:
-                    effective_endpoints = list(endpoints)
+                effective_state = DeviceState.UNKNOWN
+                effective_endpoints: list[RuntimeEndpoint] = []
+            elif state == DeviceState.UNKNOWN and not hcl_running:
+                effective_state = DeviceState.STOPPED
+                effective_endpoints = []
             else:
                 effective_state = state
                 effective_endpoints = list(endpoints)
@@ -198,12 +186,25 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
         state, endpoints = self._device_states[key]
         device_name = f"Device_{device_id}"
 
+        # Apply same HCL detection logic as discover_project
+        if state == DeviceState.UNKNOWN:
+            hcl_running = await self._check_hcl_running()
+            if hcl_running:
+                effective_state = DeviceState.UNKNOWN
+                effective_endpoints: list[RuntimeEndpoint] = []
+            else:
+                effective_state = DeviceState.STOPPED
+                effective_endpoints = []
+        else:
+            effective_state = state
+            effective_endpoints = list(endpoints)
+
         return DeviceRuntime(
             device_id=device_id,
             device_name=device_name,
-            state=state,
-            endpoints=list(endpoints),
-            last_seen=datetime.now(tz=UTC) if state == DeviceState.RUNNING else None,
+            state=effective_state,
+            endpoints=effective_endpoints,
+            last_seen=datetime.now(tz=UTC) if effective_state == DeviceState.RUNNING else None,
         )
 
     # ------------------------------------------------------------------

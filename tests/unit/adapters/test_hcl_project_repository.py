@@ -265,9 +265,10 @@ class TestHCLRealFormat5103:
             if p.project_id == "hcl_real_5103":
                 real_project = p
                 break
-        assert real_project is not None, "hcl_real_5103 project not found"
+        assert real_project is not None, "hcl_real_5103 project not found in list"
         assert real_project.name == "Test Lab 5103"
-        assert real_project.hcl_version == "5.10.3"
+        assert real_project.device_count == 2
+        # Real HCL 5.10.3 projectInfo has no hclVersion field
         assert real_project.device_count == 2
 
     def test_get_topology_real_format(self, synthetic_projects_dir):

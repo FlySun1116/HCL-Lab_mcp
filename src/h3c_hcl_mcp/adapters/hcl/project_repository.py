@@ -76,7 +76,8 @@ def _read_project_json(project_dir: str) -> dict[str, object]:
     # Normalize to internal format — supports both:
     # 1. Real HCL 5.10.3: {"projectInfo": {...}, "deviceInfoList": [...]}
     # 2. Synthetic/test:  {"id": "...", "name": "...", "devices": [...]}
-    data = _normalize_project_json(data, json_path)
+    fallback_id = os.path.basename(os.path.normpath(project_dir))
+    data = _normalize_project_json(data, json_path, fallback_id=fallback_id)
 
     if "id" not in data:
         raise DomainError(
@@ -88,43 +89,87 @@ def _read_project_json(project_dir: str) -> dict[str, object]:
     return data
 
 
-def _normalize_project_json(data: dict[str, object], json_path: str) -> dict[str, object]:
+def _normalize_project_json(
+    data: dict[str, object], json_path: str, fallback_id: str = ""
+) -> dict[str, object]:
     """Normalize project.json to internal format.
 
     Detects and converts the real HCL 5.10.3 schema:
-      {"projectInfo": {"projectName": ..., "projectId": ...}, "deviceInfoList": [...]}
+      {"projectInfo": {"name": ..., "path": ..., "visibility": ...},
+       "deviceInfoList": [{"resourceName": ..., "resourceCategory": ..., ...}]}
     into the internal schema:
       {"id": ..., "name": ..., "version": ..., "devices": [...]}
 
-    Also preserves any warnings for diagnostic reporting.
+    REAL field priority (HCL 5.10.3) always checked FIRST:
+      projectInfo.name, projectInfo.path, projectInfo.visibility
+      deviceInfoList[].resourceName, resourceCategory, resourceModel,
+      resourceVersion, configPath
+
+    Backward compatible with old synthetic format and v1 guessed names.
     """
     if "projectInfo" in data or "deviceInfoList" in data:
-        # Real HCL 5.10.3 format
         info = data.get("projectInfo", {})
         if isinstance(info, dict):
+            # REAL field names FIRST (HCL 5.10.3), then guessed, then synthetic
+            project_id = str(
+                info.get("path")
+                or info.get("projectId")
+                or info.get("id")
+                or fallback_id
+                or ""
+            )
             normalized: dict[str, object] = {
-                "id": str(info.get("projectId", info.get("id", ""))),
-                "name": str(info.get("projectName", info.get("name", "Unknown"))),
-                "version": str(info.get("hclVersion", info.get("version", ""))),
+                "id": project_id,
+                "name": str(
+                    info.get("name")
+                    or info.get("projectName")
+                    or "Unknown"
+                ),
+                "version": str(info.get("hclVersion") or info.get("version") or ""),
             }
         else:
-            normalized = {"id": "", "name": "Unknown", "version": ""}
+            normalized = {"id": fallback_id or "", "name": "Unknown", "version": ""}
 
         device_list = data.get("deviceInfoList", data.get("devices", []))
         if isinstance(device_list, list):
             devices = []
             for d in device_list:
-                if isinstance(d, dict):
-                    devices.append(
-                        {
-                            "name": str(d.get("deviceName", d.get("name", ""))),
-                            "id": int(str(d.get("deviceId", d.get("id", 0)))),
-                            "model": str(d.get("deviceModel", d.get("model", ""))),
-                            "category": str(d.get("deviceType", d.get("category", ""))),
-                            "version": str(d.get("comwareVersion", d.get("version", ""))),
-                            "configPath": str(d.get("configPath", d.get("configPath", ""))),
-                        }
-                    )
+                if not isinstance(d, dict):
+                    continue
+                # REAL field names FIRST (HCL 5.10.3 resourceName etc.)
+                # deviceId: real HCL 5.10.3 deviceInfoList has NO deviceId.
+                # Use -1 as sentinel; caller must resolve from .net via
+                # resourceName matching.
+                raw_id = d.get("deviceId", d.get("id"))
+                device_id = int(str(raw_id)) if raw_id is not None else -1
+                devices.append({
+                    "name": str(
+                        d.get("resourceName")
+                        or d.get("deviceName")
+                        or d.get("name")
+                        or ""
+                    ),
+                    "id": device_id,
+                    "model": str(
+                        d.get("resourceModel")
+                        or d.get("deviceModel")
+                        or d.get("model")
+                        or ""
+                    ),
+                    "category": str(
+                        d.get("resourceCategory")
+                        or d.get("deviceType")
+                        or d.get("category")
+                        or ""
+                    ),
+                    "version": str(
+                        d.get("resourceVersion")
+                        or d.get("comwareVersion")
+                        or d.get("version")
+                        or ""
+                    ),
+                    "configPath": str(d.get("configPath", "")),
+                })
             normalized["devices"] = devices
         else:
             normalized["devices"] = []
@@ -317,87 +362,87 @@ class HCLProjectRepository(ProjectRepository):
                 details={"path": os.path.join(project_dir, "project.json")},
             )
 
-        # Build device refs from project.json
-        device_refs: dict[int, DeviceRef] = {}
+        # Build name→device map from project.json
+        json_by_name: dict[str, dict[str, object]] = {}
+        json_by_id: dict[int, dict[str, object]] = {}
         for d in json_devices:
             if not isinstance(d, dict):
                 continue
-            device_id = d.get("id")
-            if device_id is None:
-                continue
-            device_id = int(device_id)
-            device_refs[device_id] = DeviceRef(
-                project_id=project_id,
-                device_id=device_id,
-                name=str(d.get("name", f"Device_{device_id}")),
-                model=d.get("model"),
-                comware_version=d.get("version"),
-                config_path=d.get("configPath"),
-                category=d.get("category"),
-            )
+            name = str(d.get("name", ""))
+            raw_id = d.get("id")
+            did = int(str(raw_id)) if raw_id is not None else -1
+            if name:
+                json_by_name[name] = d
+            if did > 0:
+                json_by_id[did] = d
+            elif name:
+                json_by_id[-1] = d  # sentinel for name-only resolution
 
-        # Parse .net file for topology links
+        # Parse .net file FIRST for authoritative device IDs and names
         net_file = _find_net_file(project_dir)
-        if net_file is None:
-            # No .net file — return topology with devices only
-            return Topology(
+        warnings: list[str] = []
+        net_devices_list: list = []
+        links: list[Link] = []
+
+        if net_file is not None:
+            net_devices_list, net_links_list = parse_net_file(net_file)
+            for nl in net_links_list:
+                links.append(nl.to_domain_link())
+
+        # Build device refs, resolving IDs from .net via resourceName matching
+        device_refs: dict[int, DeviceRef] = {}
+        net_name_to_id = {nd.name: nd.device_id for nd in net_devices_list}
+        net_id_to_net_dev = {nd.device_id: nd for nd in net_devices_list}
+
+        for d in json_devices:
+            if not isinstance(d, dict):
+                continue
+            device_name = str(d.get("name", ""))
+            raw_id = d.get("id")
+            did = int(str(raw_id)) if raw_id is not None else -1
+
+            # Resolve device ID: .net is authoritative when available
+            if did <= 0 and device_name and device_name in net_name_to_id:
+                did = net_name_to_id[device_name]
+            elif did <= 0:
+                warnings.append(
+                    f"Device {device_name!r} has no device_id and not found in .net"
+                )
+                continue  # skip devices we can't identify
+
+            device_refs[did] = DeviceRef(
                 project_id=project_id,
-                devices=list(device_refs.values()),
-                links=[],
-                warnings=["No .net topology file found"],
+                device_id=did,
+                name=device_name,
+                model=str(d.get("model", "")),
+                comware_version=str(d.get("version", "")),
+                config_path=str(d.get("configPath", "")),
+                category=str(d.get("category", "")),
             )
 
-        net_devices, net_links = parse_net_file(net_file)
-
-        # Cross-validate: devices in project.json must match devices in .net
-        net_device_ids = {d.device_id for d in net_devices}
-        json_device_ids = set(device_refs.keys())
-
-        warnings: list[str] = []
-
-        # Devices in .net but not in project.json
-        for nd in net_devices:
-            if nd.device_id not in json_device_ids:
-                warnings.append(
-                    f"Device {nd.name!r} (id={nd.device_id}) found in .net but not in project.json"
-                )
-
-        # Devices in project.json but not in .net
-        for did in json_device_ids - net_device_ids:
-            dr = device_refs[did]
-            warnings.append(f"Device {dr.name!r} (id={did}) found in project.json but not in .net")
-
-        # Build domain links, preserving net device info for DeviceRef
-        links: list[Link] = []
-        for nl in net_links:
-            links.append(nl.to_domain_link())
-
-        # Validate links reference known devices
-        known_ids = json_device_ids | net_device_ids
-        for nl in net_links:
-            if nl.local_device not in known_ids:
-                warnings.append(f"Link references unknown local device {nl.local_device}")
-            if nl.remote_device not in known_ids:
-                warnings.append(f"Link references unknown remote device {nl.remote_device}")
-
-        # Merge device refs: prefer project.json, supplement from .net
-        devices = list(device_refs.values())
-        for nd in net_devices:
+        # Add .net-only devices not in project.json
+        for nd in net_devices_list:
             if nd.device_id not in device_refs:
-                # Device only in .net — create a DeviceRef from net data
-                devices.append(
-                    DeviceRef(
-                        project_id=project_id,
-                        device_id=nd.device_id,
-                        name=nd.name,
-                        model=nd.model,
-                        category=nd.device_type,
-                    )
+                device_refs[nd.device_id] = DeviceRef(
+                    project_id=project_id,
+                    device_id=nd.device_id,
+                    name=nd.name,
+                    model=nd.model or "",
+                    category=nd.device_type or "",
                 )
+                warnings.append(
+                    f"Device {nd.name!r} (id={nd.device_id}) in .net but not in project.json"
+                )
+
+        if not device_refs:
+            warnings.append("No identifiable devices found in project")
+
+        if net_file is None:
+            warnings.append("No .net topology file found; device IDs from project.json only")
 
         return Topology(
             project_id=project_id,
-            devices=devices,
+            devices=list(device_refs.values()),
             links=links,
             warnings=warnings,
         )
