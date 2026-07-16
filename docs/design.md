@@ -1,9 +1,9 @@
 # HCL/H3C 专用 MCP Server 架构设计
 
-> 文档状态：Draft / 可实施基线  
+> 文档状态：已实施基线 / `v0.1.0-beta.2` 候选
 > 目标版本：v0.1（本机 HCL 实验设备只读接入）→ v1.0（受控配置变更）  
 > 目标仓库：[FlySun1116/HCL-Lab_mcp](https://github.com/FlySun1116/HCL-Lab_mcp)  
-> 调研基线：2026-07-15，本机 H3C Cloud Lab 5.10.3；远端仓库尚无可见 refs
+> 调研基线：2026-07-16，本机 H3C Cloud Lab 5.10.3；代码候选版本 `0.1.0-beta.2`
 
 ## 1. 摘要
 
@@ -19,7 +19,7 @@
 6. **不依赖未公开私有协议**：本机日志显示 HCL 内部存在 TCP 控制服务，但本项目不复制、反编译或发布其私有协议实现。设备启停等生命周期能力只有在获得厂商公开接口或明确授权后才进入稳定版。
 7. **契约先行、Agent 友好**：公共模型和 Port 接口先冻结，再允许多个 Agent 按目录并行实现；共享入口、依赖和版本文件由 Team Lead 独占。
 
-推荐的 v0.1 交付形态是 Python 包 `h3c-hcl-mcp`，通过 `uvx h3c-hcl-mcp` 启动 `stdio` Server；v1.0 再提供受保护的 Streamable HTTP 模式。
+推荐的 v0.1 交付形态是 Python 包 `h3c-hcl-mcp` 和本机 `stdio` Server。当前 beta.2 尚未发布到 PyPI，测试者应从源码创建虚拟环境并直接启动 `h3c-hcl-mcp`；正式发布后才启用 `uvx h3c-hcl-mcp` 安装路径。Streamable HTTP 计划在 v0.5 以后提供。
 
 ---
 
@@ -37,7 +37,7 @@
 | 项目元数据 | `project.json` 包含项目名称、设备名、类别、型号、版本、配置路径 | 可稳定生成项目和设备清单 |
 | 拓扑文件 | `<project-id>.net`，嵌套 INI/ConfigObj 风格 | 可解析设备、`device_id`、端口、链路、内存和坐标 |
 | 配置快照 | `DeviceConfig\\<device>.cfg` | 可做离线读取、差异对比和备份来源 |
-| 设备控制台 | HCL 为运行设备创建本机 Telnet 端口；实测 `telnet_base + device_id`，如 `30001` | v0.1 主要执行通道；必须动态发现并探测，不能只依赖公式 |
+| 设备控制台 | HCL 为运行设备创建本机 Telnet 端口；样本曾出现 `telnet_base + device_id` | v0.1 主要执行通道；beta.2 不使用公式产生候选，只接受日志绑定并完成 prompt 探测的 endpoint |
 | 控制台桥接 | 日志显示命名管道形如 `\\.\\pipe\\topo1-device1` | MCP Server 不直接访问命名管道，只连接 HCL 暴露的 loopback Telnet |
 | HCL 内部端口 | 本机观察到 16500、16600、18600 等 TCP 服务，部分监听 `0.0.0.0` | 视为 HCL 私有内部接口；不向 MCP Client 暴露，并建议用防火墙限制 |
 | 本机设备型号 | MSR36、S6850、S5800、VSR-88、F1060/F1090、PC 等 | 建立 Comware 7 通用驱动和型号能力矩阵 |
@@ -89,7 +89,7 @@
 
 ```mermaid
 flowchart LR
-    C["Claude / Cursor / 其他 MCP Client"] -->|"stdio（默认）或 Streamable HTTP"| M["MCP 协议层"]
+    C["Claude / Cursor / 其他 MCP Client"] -->|"stdio（v0.1）；Streamable HTTP（v0.5+）"| M["MCP 协议层"]
     M --> G["认证、策略、审批与审计"]
     G --> S["应用服务层"]
     S --> P["HCL 项目仓库"]
@@ -124,7 +124,7 @@ flowchart LR
 - `CommandRequest`：目标、命令类型、超时、最大输出、期望 prompt。
 - `CommandResult`：标准输出、解析数据、prompt、耗时、截断标记和警告。
 - `ChangePlan`：规范化命令、影响摘要、配置基线哈希、过期时间和审批状态。
-- `AuditEvent`：调用者、工具、目标、策略结果、变更摘要、请求 ID 和时间。
+- `AuditEvent`：调用者、工具、目标、策略结果、调用结果、错误码、请求 ID 和时间；`policy_result` 与 `outcome` 分开记录。
 
 ### 4.3 模块边界与公共契约
 
@@ -196,26 +196,26 @@ Clock                 now
 }
 ```
 
-错误使用稳定错误码，例如 `PROJECT_NOT_FOUND`、`DEVICE_NOT_RUNNING`、`CONSOLE_UNAVAILABLE`、`PROMPT_TIMEOUT`、`COMMAND_DENIED`、`APPROVAL_REQUIRED`、`BASELINE_CHANGED`。设备输出属于不可信外部数据，结果中标注 `content_trust: "untrusted_device_output"`。
+错误使用稳定错误码，例如 `PROJECT_NOT_FOUND`、`DEVICE_NOT_RUNNING`、`CONSOLE_UNAVAILABLE`、`PROMPT_TIMEOUT`、`COMMAND_DENIED`、`APPROVAL_REQUIRED`、`BASELINE_CHANGED`。设备输出属于不可信外部数据，结果中标注 `content_trust: "untrusted_device_output"`。beta.2 在 ToolManager 边界统一处理 Schema failure、未知 Tool 和 `server.max_tool_seconds` 全局超时，分别返回带 `request_id` 的 `INVALID_ARGUMENT` 或 `TIMEOUT`，并写入同一审计事件。
 
 ### 5.2 v0.1 核心工具（默认只读）
 
 | Tool | 主要输入 | 输出 | 风险/说明 |
 |---|---|---|---|
-| `server_health` | `deep=false` | Server 版本、配置状态、HCL/项目根目录/审计库健康度 | 只读；`deep=true` 才做端口探测 |
-| `hcl_list_projects` | `query?`、`limit?`、`cursor?` | 项目摘要列表 | 只读取允许的项目根目录 |
-| `hcl_get_topology` | `project_id`、`include_positions=false` | 设备、接口、链路和拓扑校验警告 | 默认不返回绝对文件路径 |
+| `server_health` | `deep=false` | Server 版本、状态和依赖摘要 | 只读；`deep=true` 枚举项目并对首个项目执行运行时发现 |
+| `hcl_list_projects` | `query?`、`limit?` | 项目摘要列表 | 只读取允许的项目根目录；不返回绝对路径 |
+| `hcl_get_topology` | `project_id` | 设备、链路和拓扑校验警告 | 拒绝路径穿越和项目根目录逃逸 |
 | `hcl_get_runtime` | `project_id` | HCL 进程状态、设备运行态、控制台可用性和发现依据 | 不连接 HCL 私有控制端口 |
-| `h3c_list_devices` | `project_id`、`state?`、`model?` | 可操作设备和通道能力 | 聚合项目与运行时数据 |
-| `h3c_get_facts` | `target`、`refresh=false` | sysname、Comware 版本、uptime、型号等 | 执行受控 `display` 命令；支持缓存 |
-| `h3c_run_display` | `target`、`command`、`timeout?`、`max_chars?` | 原始输出及可用的结构化字段 | 仅允许 `display ...` 白名单；拒绝 `|`、重定向和多命令注入 |
-| `h3c_get_config` | `target`、`source=running|startup|snapshot`、`redact=true` | 配置文本、哈希、来源 | 默认脱敏本地用户、密钥、SNMP community 等字段 |
-| `h3c_get_interfaces` | `target`、`interface?` | 接口管理/协议状态、速率、描述、地址 | 结构化解析失败时附受限 raw 输出 |
-| `h3c_ping` | `target`、`destination`、`count?`、`source?`、`vrf?` | 成功率、RTT、原始摘要 | 地址和次数强校验，禁止命令拼接 |
-| `h3c_trace_route` | `target`、`destination`、`max_hops?` | 跳点列表 | 限制最大跳数和总超时 |
-| `h3c_diff_config` | `target`、`candidate` 或 `snapshot_id` | 规范化差异与风险提示 | 只生成差异，不写设备 |
+| `h3c_list_devices` | `project_id` | H3C/Comware 候选设备及 `operable` 状态 | 聚合项目与运行时数据；过滤 PC/终端节点 |
+| `h3c_get_facts` | `project_id`、`device_id` | sysname、Comware 版本、uptime、型号等 | 执行受控 `display version` |
+| `h3c_run_display` | `project_id`、`device_id`、`command`、`timeout?` | 原始输出及可用的结构化字段 | 仅允许只读白名单；输出强制脱敏并受配置上限约束 |
+| `h3c_get_config` | `project_id`、`device_id`、`source=running|startup`、`redact=true` | 脱敏配置及来源 | v0.1 拒绝 `redact=false`；不支持 `snapshot` |
+| `h3c_get_interfaces` | `project_id`、`device_id` | 接口管理/协议状态、速率、描述、地址 | 当前执行 `display interface brief` |
+| `h3c_ping` | `project_id`、`device_id`、`destination`、`count?` | 成功率、RTT、原始摘要 | `count` 范围 1～100，目标和命令强校验 |
+| `h3c_trace_route` | `project_id`、`device_id`、`destination`、`max_hops?` | 跳点列表 | `max_hops` 范围 1～255，总超时受限 |
+| `h3c_diff_config` | `project_id`、`device_id`、`candidate?` | `NOT_IMPLEMENTED` 错误 | beta.2 仅保留稳定名称，不执行差异 |
 
-`target` 统一采用以下结构，避免只靠可重名的设备名：
+beta.2 的公开 Tool Schema 使用独立的 `project_id` 和 `device_id` 参数。以下结构化 `target` 是 v0.2 评估项，尚未进入已注册 Schema：
 
 ```json
 {
@@ -225,7 +225,9 @@ Clock                 now
 }
 ```
 
-至少提供 `project_id + device_id` 或 `project_id + device_name`；如果两者同时提供，必须一致。
+若后续引入 `target`，至少提供 `project_id + device_id` 或 `project_id + device_name`；如果两者同时提供，必须一致，并通过 ADR 与契约测试迁移现有 Schema。
+
+beta.2 共注册 15 个 namespaced Tool：本节 12 个、`job_get`、`job_cancel` 和 `audit_query`。`list_devices`、`execute_command`、`configure_device`、`get_device_status`、`ping_test` 等短名称不是公开 Tool；是否提供兼容 alias 仍按 `docs/TOOL_ALIAS_PROPOSAL.md` 决策，不能由开发 Agent 擅自增加。
 
 ### 5.3 v0.2 受控写工具（默认关闭）
 
@@ -258,10 +260,10 @@ sequenceDiagram
 
 | Tool | 用途 | 默认状态 |
 |---|---|---|
-| `h3c_run_commands` | 执行经过策略引擎审核的高级 CLI 序列 | 禁用；仅管理员显式开启 |
-| `job_get` | 查询长任务进度、阶段和部分结果 | 开启 |
-| `job_cancel` | 请求取消尚未进入不可中断阶段的任务 | 开启 |
-| `audit_query` | 按请求 ID、设备和时间查询审计摘要 | 本地管理员开启 |
+| `h3c_run_commands` | 执行经过策略引擎审核的高级 CLI 序列 | 规划项；beta.2 未注册 |
+| `job_get` | 查询长任务进度、阶段和部分结果 | 已注册；beta.2 JobStore 为占位实现，尚无生产 Job |
+| `job_cancel` | 请求取消尚未进入不可中断阶段的任务 | 已注册；beta.2 JobStore 为占位实现，尚无生产 Job |
+| `audit_query` | 按请求 ID、工具、设备和时间查询审计摘要 | 已注册；默认使用本地 SQLite，关闭审计时返回空结果且不创建数据库 |
 
 ### 5.5 HCL 生命周期工具（规划项）
 
@@ -451,7 +453,7 @@ HCL-Lab_mcp/
 - **Python 3.12**：Windows 兼容良好，异步网络和文本解析生态成熟；不要复用 HCL 自带的 Python 3.8 运行时。
 - **官方 MCP Python SDK**：截至 2026-07-15，v1.x 仍是生产稳定线，建议锁定 `mcp>=1.28,<2`；v2 仍是预发布，待稳定后通过 ADR 评估升级。
 - **Pydantic v2**：定义输入、输出和配置 Schema，使 MCP 工具返回结构化结果。
-- **uv**：依赖锁定、开发运行和 `uvx` 分发。
+- **uv**：依赖锁定、开发运行、构建和干净环境验证；PyPI 发布完成后再提供 `uvx` 分发。
 
 MCP 当前标准传输是 `stdio` 和 Streamable HTTP。`stdio` 用于由 Claude Desktop/Cursor 启动的本机单用户进程；Streamable HTTP 用于受控的多客户端服务。MCP 标准要求 HTTP 端点校验 `Origin`，本地服务应只绑定 loopback 并进行认证。
 
@@ -465,25 +467,26 @@ MCP 当前标准传输是 `stdio` 和 Streamable HTTP。`stdio` 用于由 Claude
 ### 7.2 HCL 项目发现
 
 1. 按配置读取一个或多个 `projects_dirs`。
-2. 只接受根目录直属或允许深度内的项目，解析前进行路径规范化。
-3. `project.json` 作为设备元数据主来源，`.net` 作为拓扑关系和 `device_id` 主来源。
-4. 同时存在的设备必须交叉核验名称、型号和 ID；不一致时标记项目损坏而不是猜测。
-5. 设备配置快照仅从 `project.json.configPath` 指向的项目内相对路径读取。
-6. 文件变更使用轮询或 Windows 文件事件失效缓存，不长期持有 HCL 可能正在写入的文件句柄。
+2. beta.2 只接受项目根目录直属子目录；项目 ID 不得为空、为绝对路径、包含分隔符或 `..`，解析后的真实路径必须仍位于配置根目录内。
+3. `project.json` 的 `projectInfo`/`deviceInfoList` 作为设备元数据来源，`.net` 的嵌套 `[vbox]` / `[[MODEL name]]` 段作为拓扑关系和 `device_id` 权威来源。
+4. 两种文件按设备名称（大小写不敏感）合并；链路去重；缺项或冲突形成确定性 warning，不凭列表顺序猜测 ID。
+5. 项目响应不向 MCP Client 返回服务器绝对路径；路径相关异常在 MCP 边界再次脱敏。
+6. 文件采用短时只读打开，不长期持有 HCL 可能正在写入的句柄；阻塞式扫描/解析通过 worker thread 执行，不占用 stdio event loop。
+7. `config_path` 只保留在内部领域对象，不进入公开 topology DTO；项目路径、设备 buffer 和其他未可信输出也不得进入错误详情。
 
 `.net` 解析器必须实现确定性语法或使用安全的 ConfigObj 解析库；禁止对端口字典等字段使用 Python `eval`。测试夹具全部由项目自行构造。
 
 ### 7.3 运行时与控制台发现
 
-建议的发现优先级：
+beta.2 的实际发现流程：
 
-1. 配置中对特定项目/设备的显式 endpoint；
-2. HCL 运行日志中最近一次有效的拓扑编号、Telnet 基准端口和设备端口记录；
-3. 已知基准端口加 `device_id` 的候选值；
-4. 仅针对 `127.0.0.1` 的小范围、低频连接探测；
-5. 连接后通过 Comware prompt 验证，绝不只凭端口打开就认定为目标设备。
+1. `ProjectAwareRuntimeDiscovery` 在每次项目级或设备级查询前读取拓扑，并把设备 ID/名称注册到 runtime adapter，消除调用顺序依赖。
+2. 使用公开的 Windows 卸载注册表元数据、显式 `install_dir` 和常见目录定位 HCL 5.10.x 日志；进程检测只表示 HCL 可能运行，不表示任何具体设备已启动。
+3. 按时间顺序归并轮转日志，解析 project binding、console created、console closed 和 topology alias rebound。只有明确绑定到目标项目/设备且未关闭的日志端口才成为 candidate。
+4. candidate 必须是 loopback 地址，并通过有界 TCP/Telnet 探测与 Comware prompt 识别。探测最多发送空 CRLF 以唤醒 prompt，永不回答 login/password，也不执行设备命令。
+5. 验证成功后才发布 `source=probe`、`confidence=1` 的 endpoint；项目级与设备级查询共享 2 秒运行时缓存。
 
-每个发现结果包含 `source` 和 `confidence`。端口公式只作为候选，不作为永久契约。禁止扫描局域网、禁止连接 `0.0.0.0` 表示的外部地址、禁止把 HCL 内部 16500/16600/18600 作为设备控制台。
+`fallback_telnet_base` 为配置兼容字段，beta.2 不用它生成 candidate，更不会用 `base + device_id` 公式声明设备可操作。`max_probe_ports` 只限制已有日志 candidate 的探测数量。禁止扫描局域网、连接非 loopback 地址，或把 HCL 内部 16500/16600/18600 作为设备控制台。
 
 ### 7.4 Comware CLI 会话
 
@@ -496,13 +499,15 @@ execute_config(commands, timeout) -> CommandResult
 close()
 ```
 
-首期实现：
+beta.2 已实现：
 
 - `ConsoleTelnetTransport`：连接 HCL loopback Telnet 控制台；处理 Telnet IAC、启动噪声、回显、分页和重连。
-- `SshTransport`：用于已配置管理 IP 的仿真或真实 H3C 设备；严格校验 host key。
+- `DeviceSessionManager` / `SessionManagerTransport`：按设备序列化连接，并使用 task-local 上下文防止并发请求跨设备路由。
+- prompt 失败、命令超时、EOF、取消、输出截断都会关闭并失效底层连接；只有收到完整 final prompt 且流仍打开时才允许会话复用，避免迟到输出跨调用污染。
 
 后续实现：
 
+- `SshTransport`：用于已配置管理 IP 的仿真或真实 H3C 设备；严格校验 host key。beta.2 中仅有返回 `NOT_IMPLEMENTED` 的 adapter 占位。
 - `NetconfTransport`：按设备能力使用 NETCONF over SSH，提供结构化配置事务；上线前需按具体型号/Comware 版本验证支持矩阵。
 
 会话状态机应识别：
@@ -527,7 +532,7 @@ close()
 
 - 全局限制并发设备数，每设备仅允许一个活动 CLI 会话。
 - 查询操作设置硬超时；超时后清理缓冲区并重新验证 prompt。
-- 批量采集和未来的设备启动使用 Job 模型；Tool 返回 `job_id`，通过 `job_get` 查询。
+- 批量采集和未来的设备启动使用 Job 模型；beta.2 仅注册 `job_get`/`job_cancel` 契约，尚无创建生产 Job 的用例。
 - 取消是尽力而为；进入写设备的临界区后必须先完成一致性清理再结束。
 
 ### 7.7 安全模型
@@ -549,6 +554,8 @@ close()
 - 所有文件路径必须 `resolve` 后仍位于允许根目录；拒绝路径穿越和指向根目录外的链接。
 - HTTP 模式只绑定 `127.0.0.1` 或受控管理网，启用 OAuth 2.1/企业 IdP、TLS、Origin/Host 校验和速率限制。
 - `stdio` 模式 stdout 只能输出 MCP JSON-RPC，日志全部写 stderr。
+- 官方 `tools/call` 边界把 Schema 失败规范化为结构化 `INVALID_ARGUMENT`；不回传 Pydantic `input_value`、文档 URL 或本机路径。
+- 审计开启时，响应与事件复用同一 `request_id`，保留稳定错误码；`policy_result` 只表示策略裁决，`outcome` 单独表示调用成功或失败。
 - 口令只通过环境变量引用、系统凭据库或外部 Secret Provider 获取；日志中统一脱敏。
 - HCL 当前内部服务被观察到可能监听所有网卡，安装指引应建议 Windows Defender Firewall 阻止 16500/16600/186xx 的外部入站访问。
 - 不把设备返回文本直接拼接为新的命令，防止设备 banner 或配置内容造成间接 prompt/command injection。
@@ -561,50 +568,40 @@ close()
 
 配置优先级从高到低：
 
-1. 命令行参数；
-2. `H3C_HCL_MCP__...` 环境变量；
-3. `--config` 指定的 YAML；
-4. 用户级默认配置；
+1. 命令行参数（当前为 `--projects-dir`，可重复）；
+2. `H3C_HCL_MCP__...` 嵌套环境变量；
+3. `--config` 或 `H3C_HCL_MCP_CONFIG` 显式选择的 YAML/JSON；
+4. Windows `%LOCALAPPDATA%\h3c-hcl-mcp\config.yaml|config.yml|config.json`；
 5. 程序安全默认值。
 
-敏感项不得写入仓库 YAML。配置加载后输出“已设置/未设置”，绝不回显密钥值。
+没有配置文件时 Server 以只读、stdio 安全默认值正常启动；显式选择的文件缺失、格式损坏、字段未知或值越界时，在启动 MCP 协议前以退出码 1 失败。路径字段支持环境变量和用户目录展开。列表型环境变量使用 JSON，例如 `H3C_HCL_MCP__HCL__PROJECTS_DIRS='["D:\\HCL\\Projects"]'`。敏感项不得写入仓库 YAML，日志绝不回显密钥值。
 
 ### 8.2 `config.yaml` 示例
 
 ```yaml
 server:
   name: h3c-hcl-mcp
-  transport: stdio              # stdio | streamable-http
+  transport: stdio              # v0.1 只接受 stdio
   log_level: INFO
   max_tool_seconds: 60
   max_output_chars: 32768
-
-http:
-  host: 127.0.0.1
-  port: 8765
-  path: /mcp
-  allowed_origins:
-    - http://127.0.0.1
-  auth_required: true
 
 hcl:
   install_dir: "F:\\HCL"       # 可省略并自动发现
   projects_dirs:
     - "${USERPROFILE}\\HCL\\Projects"
-  logs_dir: "F:\\HCL\\Log"   # 可省略并从 install_dir 推导
   supported_versions: ["5.10.*"]
   runtime_discovery:
     process_inspection: true
     log_observation: true
     loopback_probe: true
     console_host: 127.0.0.1
-    fallback_telnet_base: 30000
     max_probe_ports: 32
   private_control_api:
     enabled: false
 
 devices:
-  preferred_transports: [console_telnet, ssh]
+  preferred_transports: [console_telnet] # SSH 计划在 v0.2 实现
   connect_timeout_seconds: 5
   command_timeout_seconds: 20
   per_device_concurrency: 1
@@ -614,18 +611,9 @@ devices:
     known_hosts: "${USERPROFILE}\\.ssh\\known_hosts"
 
 policy:
-  mode: read_only               # read_only | controlled_write | lab_admin
-  allow_display_prefixes:
-    - "display version"
-    - "display device"
-    - "display interface"
-    - "display ip routing-table"
-    - "display lldp neighbor-information"
-  deny_patterns:
-    - "reboot"
-    - "reset saved-configuration"
-    - "format"
-    - "delete /unreserved"
+  mode: read_only               # v0.1 不注册配置写 Tool
+  allow_display_prefixes: []    # 空=内置 allowlist；非空只能进一步收紧
+  deny_patterns: []             # 额外、不区分大小写的字面子串拒绝规则
   require_approval_for_writes: true
   plan_ttl_seconds: 300
 
@@ -636,23 +624,20 @@ audit:
   store_raw_device_output: false
 ```
 
-`fallback_telnet_base` 只用于生成候选端口，必须经过 prompt 验证。生产配置中建议删除 fallback，完全依赖显式 endpoint 或经验证的运行时发现。
+完整示例见 `config/config.example.yaml` 和 `config/config.example.json`。`allow_display_prefixes=[]` 使用内置 display allowlist；非空时只能取其更小子集，不能放宽内置规则。`deny_patterns` 是额外的、不区分大小写的字面子串拒绝规则。两者均不能覆盖内置命令注入和危险命令检查。配置模型仍保留 `fallback_telnet_base` 兼容字段，但 beta.2 不使用它生成 candidate；可用 endpoint 必须来自明确日志绑定并经过 prompt 验证。`audit.enabled=false` 使用空实现，不创建 SQLite 文件。
 
 ### 8.3 Claude Desktop（本机 stdio）
 
-本机 HCL 只能由同一主机访问，因此 Claude Desktop 推荐本地 `stdio` 配置。示例 `claude_desktop_config.json`：
+本机 HCL 只能由同一主机访问，因此 Claude Desktop 推荐本地 `stdio` 配置。beta.2 尚未发布 PyPI，先在仓库执行 `uv sync --extra dev`，再把 `command` 指向源码虚拟环境中的可执行文件：
 
 ```json
 {
   "mcpServers": {
     "h3c-hcl": {
-      "command": "uvx",
+      "command": "C:\\path\\to\\HCL-Lab_mcp\\.venv\\Scripts\\h3c-hcl-mcp.exe",
       "args": [
-        "--from",
-        "h3c-hcl-mcp==0.1.0",
-        "h3c-hcl-mcp",
-        "--config",
-        "C:\\Users\\YOUR_NAME\\.config\\h3c-hcl-mcp\\config.yaml"
+        "--projects-dir",
+        "C:\\Users\\YOUR_NAME\\HCL\\Projects"
       ]
     }
   }
@@ -669,20 +654,17 @@ audit:
 {
   "mcpServers": {
     "h3c-hcl": {
-      "command": "uvx",
+      "command": "C:\\path\\to\\HCL-Lab_mcp\\.venv\\Scripts\\h3c-hcl-mcp.exe",
       "args": [
-        "--from",
-        "h3c-hcl-mcp==0.1.0",
-        "h3c-hcl-mcp",
-        "--config",
-        "C:\\Users\\YOUR_NAME\\.config\\h3c-hcl-mcp\\config.yaml"
+        "--projects-dir",
+        "C:\\Users\\YOUR_NAME\\HCL\\Projects"
       ]
     }
   }
 }
 ```
 
-受保护的 HTTP 模式可配置为：
+beta.2 会拒绝 HTTP/SSE transport。以下受保护的 HTTP 模式是 v0.5+ 规划示例，不适用于当前版本：
 
 ```json
 {
@@ -697,9 +679,32 @@ audit:
 
 参考：[Cursor MCP 官方文档](https://docs.cursor.com/context/model-context-protocol)。
 
+### 8.5 Visual Studio Code
+
+工作区配置放在 `.vscode/mcp.json`。VS Code 使用顶层 `servers`，本地进程声明 `type: "stdio"`：
+
+```json
+{
+  "servers": {
+    "h3c-hcl": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\HCL-Lab_mcp\\.venv\\Scripts\\h3c-hcl-mcp.exe",
+      "args": [
+        "--projects-dir",
+        "C:\\Users\\YOUR_NAME\\HCL\\Projects"
+      ]
+    }
+  }
+}
+```
+
+参考：[VS Code MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration)。仓库中的三个 `examples/*.json` 都使用源码虚拟环境路径，用户必须替换占位路径。
+
 ---
 
 ## 9. 发布方式
+
+> 当前发布状态：`0.1.0-beta.2` 是候选代码版本，尚未创建 tag、GitHub Release 或 PyPI 发布。以下内容是目标发布方式，不是已经可用的公共安装渠道。
 
 ### 9.1 开源仓库
 
@@ -743,7 +748,7 @@ HCL 控制台依赖 Windows 主机的 loopback 端口和用户会话，容器不
 
 ### 10.1 仓库初始化
 
-目标仓库是 [FlySun1116/HCL-Lab_mcp](https://github.com/FlySun1116/HCL-Lab_mcp)。截至调研日，远端没有可见分支或标签，应按“空仓库启动”执行：
+目标仓库是 [FlySun1116/HCL-Lab_mcp](https://github.com/FlySun1116/HCL-Lab_mcp)。仓库 bootstrap 已完成；以下保留为历史初始化策略和新镜像仓库的复现步骤：
 
 1. 维护者在本地创建 `main`，首个提交只包含许可证、README、设计文档、贡献规范、`CLAUDE.md`、`.gitignore` 和最小 CI。
 2. 首个提交使用 `chore(repo): bootstrap open-source project`，推送后立即将 `main` 设为默认分支。
@@ -830,7 +835,7 @@ Agent 可领取的 Issue 必须达到 Definition of Ready：
 
 - PR 尽量控制在一个模块或约 400 行有效改动内；超出时拆分为契约、实现、集成三个 PR。
 - 用 release-please 或等价的 Conventional Commits 自动生成 CHANGELOG 和 Release PR。
-- Tag 使用 `vMAJOR.MINOR.PATCH`；预发布使用 `v0.1.0-alpha.1`、`beta.1`、`rc.1`。
+- Tag 使用 `vMAJOR.MINOR.PATCH`；预发布使用 `v0.1.0-alpha.1`、`v0.1.0-beta.2`、`v0.1.0-rc.1`。
 - Release 只从 `main` 或受保护的 `release/vX.Y` 生成，使用 GitHub Environment 人工批准 PyPI 发布。
 - 每个 Release 附 wheel、sdist、SHA-256、SBOM、provenance、兼容矩阵和升级说明。
 - 安全修复遵循私下报告、修复分支、协调披露流程，不先创建公开漏洞 Issue。
@@ -908,7 +913,7 @@ flowchart TD
     T5 --> T6
     T6 --> T7["T7 QA：Windows CI、MCP Inspector、兼容报告"]
     T7 --> T8["T8 Security：独立发布审查"]
-    T8 --> T9["T9 Lead：v0.1.0-alpha.1 Release PR"]
+    T8 --> T9["T9 Lead：v0.1 beta Release PR"]
 ```
 
 任务拆分示例：
@@ -1036,7 +1041,8 @@ h3c_hcl_mcp.approval_providers
 |---|---|---|---|---|
 | `v0.0.1` | Repository bootstrap | 治理文件、package skeleton、CI、ADR、合成 fixtures | 设备连接 | 所有基础 checks 通过 |
 | `v0.1.0-alpha.1` | Read-only vertical slice | 一个合成项目、一台 fake Comware、`server_health`/项目/设备 facts | 真实 HCL、写操作 | MCP Inspector 端到端通过 |
-| `v0.1.0-beta.1` | Local HCL beta | HCL 5.10.x 项目发现、console Telnet、全部 v0.1 只读工具 | SSH、写配置 | Windows 自托管 HCL 验证，无高危问题 |
+| `v0.1.0-beta.1` | First local HCL beta | 首版 HCL 项目发现、console Telnet 和 15 个 v0.1 Tool | SSH、写配置 | 暴露真实 parser/runtime/validation 问题，进入 beta.2 修复 |
+| `v0.1.0-beta.2` | Local HCL hardening candidate | 真实 HCL 5.10 parser、日志绑定 + prompt runtime、stdio validation/audit、配置和并发修复 | SSH、写配置、PyPI 发布 | 全量门禁、Python 3.12 干净 wheel、真实运行设备两条 display 验证 |
 | `v0.1.0` | Read-only MVP | Claude/Cursor stdio、审计、兼容矩阵、PyPI | 任意配置写入 | 稳定错误码，核心覆盖率 ≥ 85% |
 | `v0.2.0` | Controlled change preview | SSH、plan/apply、审批、备份、接口启停 | 远程多用户、HCL lifecycle | 所有写操作可审计且失败安全 |
 | `v0.3.0` | Protocol expansion | NETCONF capability、更多 Comware parser、MCP Resources/Prompts | 未验证型号的通用承诺 | 至少两个设备族兼容验证 |
@@ -1090,7 +1096,7 @@ h3c_hcl_mcp.approval_providers
 |---|---|
 | HCL 私有接口可能变化且存在许可问题 | 稳定版不依赖；生命周期功能等待正式接口/授权 |
 | Telnet 明文且控制台有状态 | 只允许 loopback；每设备独占锁；真实设备优先 SSH |
-| Telnet 端口分配不是公开契约 | 多来源发现 + prompt 验证 + 显式 endpoint 覆盖 |
+| Telnet 端口分配不是公开契约 | beta.2 只接受日志绑定 candidate 并进行 prompt 验证；显式 endpoint 作为后续扩展 |
 | HCL 可能同时写项目文件 | 短时打开、读取副本、哈希校验、失败重试，不持有写锁 |
 | 模型可能生成危险命令 | 默认只读、结构化工具、服务端策略、一次性审批，不能信任客户端 UI |
 | 设备输出可能非常大 | 上限、分页、快照 URI、哈希和 `truncated` 标志 |
@@ -1108,10 +1114,10 @@ h3c_hcl_mcp.approval_providers
 
 1. Claude Desktop 与 Cursor 可通过 stdio 启动 Server，并列出同一组工具。
 2. 能从 HCL 5.10.x 用户项目解析设备、链路、型号、版本和配置快照路径。
-3. 能发现已启动设备的 loopback 控制台，并验证目标 prompt 与 `device_id` 一致。
+3. 能发现已启动设备的 loopback 控制台，日志绑定必须对应目标项目/`device_id`，连接后还必须验证为 Comware prompt。
 4. `h3c_run_display` 只允许策略内命令，注入、换行、多命令和危险前缀测试全部拒绝。
 5. 不启动设备、不修改 HCL/VirtualBox、不访问 HCL 私有控制服务。
-6. 任何 Tool 都有超时、输出上限、稳定错误码、请求 ID 和审计事件。
+6. 任何 Tool 都有超时、输出上限、稳定错误码和请求 ID；审计开启时每次调用（包括 Schema 失败）都有可关联事件。
 7. 仓库与发布包不包含 HCL 二进制、镜像、厂商文档、真实拓扑、真实配置或凭据。
 8. HCL 未安装、项目损坏、设备未启动、prompt 超时、连接中断等场景有明确可执行提示。
 9. `CLAUDE.md`、Agent 角色和 Issue 模板能让新 Agent 在不读取历史聊天的情况下理解边界、命令和完成标准。

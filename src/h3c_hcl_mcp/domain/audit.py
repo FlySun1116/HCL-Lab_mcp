@@ -18,6 +18,7 @@ class AuditEvent(BaseModel):
     tool: str = Field(description="MCP tool name")
     target: dict[str, object] | None = Field(default=None, description="Target descriptor")
     policy_result: str = Field(default="allowed", description="Policy decision")
+    outcome: str = Field(default="success", description="Invocation outcome: success or error")
     change_summary: str | None = Field(default=None, description="Summary of state changes")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     duration_ms: float = Field(default=0.0)

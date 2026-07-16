@@ -2,23 +2,23 @@
   "projectInfo": {
     "name": "Test Lab 5103",
     "path": "hcl_real_5103",
-    "visibility": 0,
+    "visibility": "2",
     "introduction": "",
-    "label": ""
+    "label": []
   },
   "deviceInfoList": [
     {
       "resourceName": "S6850_1",
-      "resourceCategory": "switch",
-      "resourceModel": "S6850-56HF",
-      "resourceVersion": "7.1.070",
+      "resourceCategory": "交换机",
+      "resourceModel": "S6850",
+      "resourceVersion": "CMW7.1.070-A7170",
       "configPath": "DeviceConfig\\S6850_1.cfg"
     },
     {
       "resourceName": "MSR36_1",
-      "resourceCategory": "router",
-      "resourceModel": "MSR36-20",
-      "resourceVersion": "7.1.064",
+      "resourceCategory": "路由器",
+      "resourceModel": "MSR36",
+      "resourceVersion": "CMW7.1.070-R6728",
       "configPath": "DeviceConfig\\MSR36_1.cfg"
     }
   ]

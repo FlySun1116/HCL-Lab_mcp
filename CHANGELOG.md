@@ -5,6 +5,55 @@ All notable changes to h3c-hcl-mcp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.2] — Unreleased
+
+### Added
+
+- Added HCL 5.10.x ConfigObj-style `.net` fixtures and parser coverage for nested device/link sections.
+- Added chronological HCL log reduction for project binding, console creation, console closure, and topology-alias rebinding.
+- Added bounded loopback Telnet/Comware prompt verification before a console endpoint can be reported as usable.
+- Added `ProjectAwareRuntimeDiscovery` so project topology is registered before both project-wide and single-device discovery.
+- Added official MCP `ClientSession` stdio subprocess tests for no-config startup, `initialize`, `tools/list`, `tools/call`, validation, configuration sources, and pre-protocol configuration failures.
+- Added Python 3.12 clean-wheel stdio test support through `H3C_HCL_MCP_TEST_PYTHON`.
+
+### Fixed
+
+- Parsed real HCL 5.10.3 `projectInfo`/`deviceInfoList` fields and merged device metadata with `.net` authoritative IDs using case-insensitive names.
+- Rejected absolute, traversal, separator-bearing, and root-escaping project IDs, including resolved symlink escapes.
+- Removed formula-derived console availability and the previous "any HCL process means every device is running" false positive.
+- Kept project-wide and single-device runtime results coherent through a short shared cache; closed or rebound consoles no longer leave stale endpoints.
+- Passed verified `project_id`/`device_id` endpoint context into console sessions and isolated per-task session routing to prevent cross-device execution.
+- Used the configured connection timeout instead of endpoint confidence as the Telnet timeout.
+- Made a missing default configuration safe and optional while keeping explicitly selected missing or malformed files fail-closed.
+- Added `PyYAML` as a runtime dependency and corrected nested JSON-list environment-variable coercion.
+- Enforced v0.1 `stdio` transport, exclusive per-device concurrency, and valid unique transport preferences during configuration validation.
+- Wired `allow_display_prefixes` as a restriction-only subset of the built-in display allowlist and `deny_patterns` as additional case-insensitive literal denials; neither can bypass mandatory injection/dangerous-command checks.
+- Normalized official stdio argument validation failures to structured `INVALID_ARGUMENT` results without Pydantic input or documentation URL leakage.
+- Normalized unknown Tool calls, added correlated audit events, and enforced `server.max_tool_seconds` at the ToolManager boundary with stable `TIMEOUT` results.
+- Correlated response and audit `request_id`, preserved domain error codes, audited schema failures, and separated invocation `outcome` from `policy_result`.
+- Normalized audit timestamps to UTC for correct offset-aware filtering and migrated legacy error outcomes.
+- Honored `audit.enabled=false` without creating an audit database.
+- Removed project absolute paths and device `config_path` values from MCP responses and sanitized path-bearing or device-output-bearing domain errors at the MCP boundary.
+- Filtered HCL PC/terminal nodes from H3C device results and applied mandatory sensitive-output redaction at the MCP boundary; `redact=false` now fails with `POLICY_DENIED`.
+- Covered complete and truncated PKCS#8/RSA/EC/OpenSSH/encrypted private-key blocks and SNMPv3 credentials in mandatory redaction.
+- Closed and invalidated Telnet sessions after prompt failure, EOF, cancellation, truncation, or command timeout so late bytes cannot contaminate a later request.
+- Moved project scanning/topology parsing off the stdio event loop and reconciled deleted topology devices from cached runtime state.
+- Made deep health checks inspect configured projects and real runtime discovery instead of reporting an unconditional dependency result.
+
+### Changed
+
+- Version metadata now identifies the candidate as `0.1.0-beta.2`.
+- The v0.1 public surface remains 15 namespaced tools. Proposed short aliases are not registered; `h3c_diff_config` remains an explicit `NOT_IMPLEMENTED` placeholder.
+- Client configuration examples now launch a source-installed local virtual-environment executable. The package has not yet been published to PyPI, so `uvx h3c-hcl-mcp` is not a supported installation path for this candidate.
+
+### Verification status
+
+- Frozen-candidate gates pass: Ruff check/format, mypy over 68 source files, and **489 pytest tests** on Python 3.14.5.
+- `uv build` produces `0.1.0b2` wheel/sdist; the wheel contains the audit schema and passes all **7 official stdio tests** from a clean Python 3.12.13 environment.
+- Synthetic parser, fake console, MCP protocol, validation, audit, configuration, redaction, timeout, and concurrency paths are automated.
+- A local HCL 5.10.3 project was parsed read-only, but the target project/devices were not running during the latest runtime check. Successful real-device `display version` and `display ip interface brief` remain release-candidate exit checks.
+- No tag, GitHub Release, or PyPI publication has been created for this candidate.
+
 ## [0.1.0-beta.1] — 2026-07-15
 
 ### Fixed — Bugfix from TEST_REPORT_v0.1.md

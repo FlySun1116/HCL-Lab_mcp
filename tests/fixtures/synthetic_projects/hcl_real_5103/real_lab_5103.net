@@ -1,27 +1,27 @@
-[topology]
-device_count=2
-link_count=1
-
-[device-1]
-name=S6850_1
-device_id=1
-type=switch
-model=S6850-56HF
-x=250
-y=180
-
-[device-2]
-name=MSR36_1
-device_id=2
-type=router
-model=MSR36-20
-x=580
-y=180
-
-[link-1]
-local_device=1
-local_if=GigabitEthernet1/0/1
-local_port=1
-remote_device=2
-remote_if=GigabitEthernet0/0
-remote_port=1
+version = 5.10.3
+[vbox 127.0.0.1:16600]
+    workingdir = C:\Users\example\HCL\Projects\hcl_real_5103\working
+    udp = 10000
+    [[S6850 S6850_1]]
+        device_id = 1
+        bridge_mac = 00-00-00-00-01-00
+        slot0 = S5800 512
+        GE_0/1 = MSR36_1 GE_0/1
+        x = -481.0
+        y = -396.5000000000001
+        z = 5.0
+    [[MSR36 MSR36_1]]
+        device_id = 2
+        bridge_mac = 00-00-00-00-02-00
+        slot0 = MSR36 512
+        GE_0/1 = S6850_1 GE_0/1
+        x = 82.0
+        y = -396.0
+        z = 5.0
+[Non-vBox-DATA]
+    workdir = working
+    [[NOTE 1]]
+        text = "GE_0/1"
+        interface = S6850_1 GE_0/1
+        x = 0.0
+        y = 0.0

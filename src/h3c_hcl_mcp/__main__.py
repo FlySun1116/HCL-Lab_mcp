@@ -60,7 +60,10 @@ def main(argv: list[str] | None = None) -> None:
         config_path=args.config,
     )
 
-    print(f"{SERVER_NAME} v{VERSION} -- starting stdio server...", file=sys.stderr)
+    from h3c_hcl_mcp.infrastructure.logging import setup_logging
+
+    setup_logging(settings.server.log_level)
+    print(f"{settings.server.name} v{VERSION} -- starting stdio server...", file=sys.stderr)
 
     server = create_server(settings=settings)
     asyncio.run(server.run_stdio_async())

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
-from h3c_hcl_mcp.domain.errors import DomainError
+from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.result import ToolResult
 from h3c_hcl_mcp.mcp.error_mapping import internal_error, map_domain_error
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
@@ -35,10 +36,10 @@ def register(mcp: FastMCP, **deps: Any) -> None:
     async def audit_query(
         request_id: str = "",
         tool: str = "",
-        target_device: int = 0,
+        target_device: Annotated[int, Field(ge=0, description="Target device ID")] = 0,
         since: str = "",
         until: str = "",
-        limit: int = 100,
+        limit: Annotated[int, Field(ge=1, le=500, description="Maximum events")] = 100,
     ) -> ToolResult:
         """Query audit events with optional filters.
 
@@ -58,12 +59,25 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             since_dt: datetime | None = None
             until_dt: datetime | None = None
 
-            if since:
-                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-            if until:
-                until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
-
-            limit = max(1, min(limit, 500))
+            try:
+                if since:
+                    since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                    if since_dt.tzinfo is None:
+                        since_dt = since_dt.replace(tzinfo=UTC)
+                if until:
+                    until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+                    if until_dt.tzinfo is None:
+                        until_dt = until_dt.replace(tzinfo=UTC)
+            except ValueError as error:
+                raise DomainError(
+                    ErrorCode.INVALID_ARGUMENT,
+                    "since and until must be ISO-8601 timestamps",
+                ) from error
+            if since_dt is not None and until_dt is not None and since_dt > until_dt:
+                raise DomainError(
+                    ErrorCode.INVALID_ARGUMENT,
+                    "since must not be later than until",
+                )
 
             events = await audit_sink.query(
                 request_id=request_id if request_id else None,

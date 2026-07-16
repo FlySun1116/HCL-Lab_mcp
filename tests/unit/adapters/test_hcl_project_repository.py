@@ -12,6 +12,8 @@ from h3c_hcl_mcp.adapters.hcl.project_repository import (
     _find_net_file,
     _get_file_mtime,
     _read_project_json,
+    _resolve_project_dir,
+    _validate_project_id,
     _validate_project_path,
 )
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
@@ -28,6 +30,23 @@ class TestValidateProjectPath:
         with pytest.raises(DomainError) as exc:
             _validate_project_path("../etc")
         assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    @pytest.mark.parametrize(
+        "project_id",
+        ["", ".", "..", "../outside", r"..\outside", "/absolute", r"C:\absolute"],
+    )
+    def test_project_identifier_paths_are_rejected(self, project_id: str):
+        with pytest.raises(DomainError) as exc:
+            _validate_project_id(project_id)
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    def test_project_directory_resolves_inside_root(self, tmp_path: Path):
+        project_dir = tmp_path / "hcl_safe"
+        project_dir.mkdir()
+
+        resolved = _resolve_project_dir(str(tmp_path), "hcl_safe")
+
+        assert Path(resolved) == project_dir
 
 
 class TestReadProjectJson:
@@ -268,8 +287,8 @@ class TestHCLRealFormat5103:
         assert real_project is not None, "hcl_real_5103 project not found in list"
         assert real_project.name == "Test Lab 5103"
         assert real_project.device_count == 2
-        # Real HCL 5.10.3 projectInfo has no hclVersion field
-        assert real_project.device_count == 2
+        # Real project.json has no hclVersion; it comes from the .net header.
+        assert real_project.hcl_version == "5.10.3"
 
     def test_get_topology_real_format(self, synthetic_projects_dir):
         """Topology should include devices from deviceInfoList."""
@@ -281,6 +300,10 @@ class TestHCLRealFormat5103:
         assert "S6850_1" in device_names
         assert "MSR36_1" in device_names
         assert len(topo.links) == 1
+        link = topo.links[0]
+        assert {link.local_device_id, link.remote_device_id} == {1, 2}
+        assert link.local_interface == "GE_0/1"
+        assert link.remote_interface == "GE_0/1"
 
     def test_device_fields_real_format(self, synthetic_projects_dir):
         """Device fields should be correctly mapped from real format."""
@@ -288,6 +311,29 @@ class TestHCLRealFormat5103:
         topo = asyncio.run(repo.get_topology("hcl_real_5103"))
         s6850 = topo.get_device_by_name("S6850_1")
         assert s6850 is not None
-        assert s6850.model == "S6850-56HF"
-        assert s6850.category == "switch"
-        assert s6850.comware_version == "7.1.070"
+        assert s6850.device_id == 1
+        assert s6850.model == "S6850"
+        assert s6850.category == "交换机"
+        assert s6850.comware_version == "CMW7.1.070-A7170"
+        assert s6850.config_path == "DeviceConfig\\S6850_1.cfg"
+
+    def test_project_directory_is_stable_id_when_project_info_path_is_stale(self, tmp_path: Path):
+        """Copied projects remain discoverable even with an old absolute path."""
+        project_dir = tmp_path / "hcl_copied_5103"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            """{
+              "projectInfo": {
+                "name": "Copied Lab",
+                "path": "C:\\\\old-user\\\\HCL\\\\Projects\\\\hcl_old_id"
+              },
+              "deviceInfoList": []
+            }""",
+            encoding="utf-8",
+        )
+
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path)])
+        project = asyncio.run(repo.get_project("hcl_copied_5103"))
+
+        assert project.project_id == "hcl_copied_5103"
+        assert project.name == "Copied Lab"

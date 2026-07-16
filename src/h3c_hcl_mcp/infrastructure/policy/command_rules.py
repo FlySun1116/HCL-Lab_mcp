@@ -7,6 +7,7 @@ v0.1 is read-only: only display and diagnostic commands are allowed.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from re import Pattern
 
 from h3c_hcl_mcp.domain.command import CommandType
@@ -104,7 +105,7 @@ INJECTION_PATTERNS: list[tuple[Pattern[str], str]] = [
 ]
 
 
-def _command_matches_prefix(command: str, prefixes: list[str]) -> bool:
+def _command_matches_prefix(command: str, prefixes: Sequence[str]) -> bool:
     """Check if `command` starts with one of the allowed prefixes."""
     lowered = command.strip().lower()
     return any(lowered == prefix or lowered.startswith(prefix + " ") for prefix in prefixes)
@@ -142,7 +143,13 @@ def _check_injection_patterns(command: str) -> str | None:
     return None
 
 
-def validate_command(command: str, command_type: CommandType) -> tuple[bool, str | None]:
+def validate_command(
+    command: str,
+    command_type: CommandType,
+    *,
+    allowed_display_prefixes: Sequence[str] | None = None,
+    denied_patterns: Sequence[str] | None = None,
+) -> tuple[bool, str | None]:
     """Validate a command against the security policy.
 
     Checks:
@@ -171,10 +178,24 @@ def validate_command(command: str, command_type: CommandType) -> tuple[bool, str
     if denied_reason:
         return False, denied_reason
 
-    # Step 3: allowlist check by command type
+    # Step 3: optional operator deny rules.  These are literal,
+    # case-insensitive substrings and can only make the built-in policy more
+    # restrictive; they can never bypass the mandatory checks above.
+    lowered_command = command.casefold()
+    for pattern in denied_patterns or ():
+        normalized_pattern = pattern.strip().casefold()
+        if normalized_pattern and normalized_pattern in lowered_command:
+            return False, "command rejected by configured deny pattern"
+
+    # Step 4: built-in allowlist check by command type
     if command_type == CommandType.DISPLAY:
         if not _command_matches_prefix(command, ALLOWED_DISPLAY_COMMANDS):
             return False, f"command not in display allowlist: '{command}'"
+        if allowed_display_prefixes and not _command_matches_prefix(
+            command,
+            [prefix.strip().casefold() for prefix in allowed_display_prefixes if prefix.strip()],
+        ):
+            return False, "command not in configured display allowlist"
 
     elif command_type == CommandType.DIAGNOSTIC:
         if not _command_matches_prefix(command, ALLOWED_DIAGNOSTIC_COMMANDS):
@@ -186,7 +207,7 @@ def validate_command(command: str, command_type: CommandType) -> tuple[bool, str
     else:
         return False, f"unknown command type: '{command_type.value}'"
 
-    # Step 4: additional ping/tracert validation — only allow safe arguments
+    # Step 5: additional ping/tracert validation — only allow safe arguments
     if command_type == CommandType.DIAGNOSTIC:
         diagnostic_reason = _validate_diagnostic_args(command)
         if diagnostic_reason:

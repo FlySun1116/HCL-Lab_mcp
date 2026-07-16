@@ -2,7 +2,7 @@
 
 This module is responsible for:
 1. Creating real adapter implementations (HCL, Security) wired from T3/T5
-2. Keeping placeholders only for T4 (Comware transport) which is still in progress
+2. Wiring the v0.1 Comware loopback-console transport and parsers
 3. Assembling the FastMCP server instance
 4. Registering all tool modules with injected dependencies
 5. Starting the stdio transport loop
@@ -25,8 +25,9 @@ from h3c_hcl_mcp.adapters.comware.session_manager import (
 )
 from h3c_hcl_mcp.adapters.hcl.project_repository import HCLProjectRepository
 from h3c_hcl_mcp.adapters.hcl.runtime_discovery import HCLRuntimeDiscovery
+from h3c_hcl_mcp.application.runtime_service import ProjectAwareRuntimeDiscovery
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
-from h3c_hcl_mcp.infrastructure.audit.store import SQLiteAuditStore
+from h3c_hcl_mcp.infrastructure.audit.store import NullAuditStore, SQLiteAuditStore
 from h3c_hcl_mcp.infrastructure.policy.approvals import ApprovalProviderImpl
 from h3c_hcl_mcp.infrastructure.policy.engine import PolicyEngineImpl
 from h3c_hcl_mcp.infrastructure.secrets import SecretProviderImpl
@@ -232,20 +233,35 @@ def create_server(
     project_repo: ProjectRepository = HCLProjectRepository(
         projects_dirs=hcl_projects_dirs,
     )
-    runtime_disc: RuntimeDiscovery = HCLRuntimeDiscovery(
+    runtime_adapter = HCLRuntimeDiscovery(
         fallback_telnet_base=settings.hcl.runtime_discovery.fallback_telnet_base,
         console_host=settings.hcl.runtime_discovery.console_host,
+        install_dir=settings.hcl.install_dir,
+        process_inspection=settings.hcl.runtime_discovery.process_inspection,
+        log_observation=settings.hcl.runtime_discovery.log_observation,
+        loopback_probe=settings.hcl.runtime_discovery.loopback_probe,
+        max_probe_ports=settings.hcl.runtime_discovery.max_probe_ports,
+    )
+    runtime_disc: RuntimeDiscovery = ProjectAwareRuntimeDiscovery(
+        project_repository=project_repo,
+        delegate=runtime_adapter,
+        topology_registrar=runtime_adapter,
     )
 
-    # T4: Comware parsers (composite — transport still placeholder)
+    # T4: Comware loopback-console transport and parsers
     cmd_parser: CommandParser = _CompositeCommandParser()
-    session_manager = DeviceSessionManager()
+    session_manager = DeviceSessionManager(
+        connect_timeout_seconds=settings.devices.connect_timeout_seconds,
+    )
     device_transport: DeviceTransport = SessionManagerTransport(session_manager)
 
     # T5: Security
     policy_engine: PolicyEngine = PolicyEngineImpl(settings=settings.policy)
-    audit_db = settings.audit.database if settings.audit.database else None
-    audit_sink: AuditSink = SQLiteAuditStore(db_path=audit_db)
+    if settings.audit.enabled:
+        audit_db = settings.audit.database if settings.audit.database else None
+        audit_sink: AuditSink = SQLiteAuditStore(db_path=audit_db)
+    else:
+        audit_sink = NullAuditStore()
     secret_provider: SecretProvider = SecretProviderImpl()
     approval_prov: ApprovalProvider = ApprovalProviderImpl()
 
@@ -266,7 +282,7 @@ def create_server(
 
     # --- Create the MCP server ---
     mcp = FastMCP(
-        name=SERVER_NAME,
+        name=settings.server.name,
         instructions=(
             "HCL-Lab MCP Server provides discovery, monitoring, and CLI access "
             "for H3C Cloud Lab (HCL) network simulation environments. "
@@ -279,10 +295,15 @@ def create_server(
     mcp._mcp_server.version = VERSION
 
     # Register all tool modules with injected dependencies
-    health.register(mcp, **adapters)
+    health.register(mcp, **adapters, server_name=settings.server.name)
     hcl_projects.register(mcp, **adapters)
     hcl_runtime.register(mcp, **adapters)
-    h3c_read.register(mcp, **adapters)
+    h3c_read.register(
+        mcp,
+        **adapters,
+        server_settings=settings.server,
+        device_settings=settings.devices,
+    )
     # h3c_change.register(mcp, **adapters)  # v0.2 tools — disabled in v0.1
     jobs.register(mcp, **adapters)
     audit.register(mcp, **adapters)
@@ -290,7 +311,11 @@ def create_server(
     # --- Wrap call_tool with validation error reformatting (BUG-014) ---
     from h3c_hcl_mcp.mcp.validation_middleware import wrap_call_tool_with_validation
 
-    wrap_call_tool_with_validation(mcp)
+    wrap_call_tool_with_validation(
+        mcp,
+        audit_sink=audit_sink,
+        timeout_seconds=settings.server.max_tool_seconds,
+    )
 
     # --- Wrap all tools with audit middleware (BUG-009) ---
     _wrap_tools_with_audit(mcp, audit_sink)
@@ -298,7 +323,7 @@ def create_server(
     real_count = sum(1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore))
     logger.info(
         "MCP server '%s' v%s created: %d real adapters, %d placeholders.",
-        SERVER_NAME,
+        settings.server.name,
         VERSION,
         real_count,
         len(adapters) - real_count,

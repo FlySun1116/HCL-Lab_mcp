@@ -5,12 +5,15 @@ Implements the ProjectRepository port using filesystem scanning and JSON/configp
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import ntpath
 import os
+import re
 from datetime import UTC, datetime
 
-from h3c_hcl_mcp.adapters.hcl.net_parser import parse_net_file
+from h3c_hcl_mcp.adapters.hcl.net_parser import NetDeviceEntry, parse_net_file
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.project import DeviceRef, LabProject, Link, Topology
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
@@ -30,6 +33,41 @@ def _validate_project_path(project_dir: str) -> None:
             message=f"Path traversal detected in project path: {project_dir!r}",
             details={"path": project_dir},
         )
+
+
+def _validate_project_id(project_id: str) -> None:
+    """Require a single HCL project directory name, never a filesystem path."""
+    if (
+        not project_id
+        or project_id in {".", ".."}
+        or os.path.basename(project_id) != project_id
+        or ntpath.basename(project_id) != project_id
+        or os.path.isabs(project_id)
+        or ntpath.isabs(project_id)
+    ):
+        raise DomainError(
+            code=ErrorCode.PROJECT_PATH_TRAVERSAL,
+            message="Project identifier must be a directory name",
+            details={"project_id": project_id},
+        )
+
+
+def _resolve_project_dir(projects_dir: str, project_id: str) -> str:
+    """Resolve a project below its configured root, including symlink checks."""
+    _validate_project_id(project_id)
+    root = os.path.realpath(os.path.abspath(projects_dir))
+    candidate = os.path.realpath(os.path.join(root, project_id))
+    try:
+        inside_root = os.path.commonpath((root, candidate)) == root
+    except ValueError:
+        inside_root = False
+    if not inside_root:
+        raise DomainError(
+            code=ErrorCode.PROJECT_PATH_TRAVERSAL,
+            message="Project directory is outside the configured root",
+            details={"project_id": project_id},
+        )
+    return candidate
 
 
 def _read_project_json(project_dir: str) -> dict[str, object]:
@@ -111,20 +149,16 @@ def _normalize_project_json(
         info = data.get("projectInfo", {})
         if isinstance(info, dict):
             # REAL field names FIRST (HCL 5.10.3), then guessed, then synthetic
-            project_id = str(
-                info.get("path")
-                or info.get("projectId")
-                or info.get("id")
-                or fallback_id
-                or ""
-            )
+            # The directory is the stable identifier used by HCL itself.  Some
+            # projects contain an absolute or stale projectInfo.path after they
+            # have been copied, so it must not make an otherwise valid project
+            # undiscoverable.
+            info_path = str(info.get("path") or "")
+            path_id = os.path.basename(os.path.normpath(info_path)) if info_path else ""
+            project_id = str(fallback_id or path_id or info.get("projectId") or info.get("id") or "")
             normalized: dict[str, object] = {
                 "id": project_id,
-                "name": str(
-                    info.get("name")
-                    or info.get("projectName")
-                    or "Unknown"
-                ),
+                "name": str(info.get("name") or info.get("projectName") or "Unknown"),
                 "version": str(info.get("hclVersion") or info.get("version") or ""),
             }
         else:
@@ -142,34 +176,20 @@ def _normalize_project_json(
                 # resourceName matching.
                 raw_id = d.get("deviceId", d.get("id"))
                 device_id = int(str(raw_id)) if raw_id is not None else -1
-                devices.append({
-                    "name": str(
-                        d.get("resourceName")
-                        or d.get("deviceName")
-                        or d.get("name")
-                        or ""
-                    ),
-                    "id": device_id,
-                    "model": str(
-                        d.get("resourceModel")
-                        or d.get("deviceModel")
-                        or d.get("model")
-                        or ""
-                    ),
-                    "category": str(
-                        d.get("resourceCategory")
-                        or d.get("deviceType")
-                        or d.get("category")
-                        or ""
-                    ),
-                    "version": str(
-                        d.get("resourceVersion")
-                        or d.get("comwareVersion")
-                        or d.get("version")
-                        or ""
-                    ),
-                    "configPath": str(d.get("configPath", "")),
-                })
+                devices.append(
+                    {
+                        "name": str(d.get("resourceName") or d.get("deviceName") or d.get("name") or ""),
+                        "id": device_id,
+                        "model": str(d.get("resourceModel") or d.get("deviceModel") or d.get("model") or ""),
+                        "category": str(
+                            d.get("resourceCategory") or d.get("deviceType") or d.get("category") or ""
+                        ),
+                        "version": str(
+                            d.get("resourceVersion") or d.get("comwareVersion") or d.get("version") or ""
+                        ),
+                        "configPath": str(d.get("configPath", "")),
+                    }
+                )
             normalized["devices"] = devices
         else:
             normalized["devices"] = []
@@ -206,6 +226,25 @@ def _get_file_mtime(file_path: str) -> datetime | None:
         return None
 
 
+def _read_net_version(project_dir: str) -> str | None:
+    """Read the public HCL version header without parsing the full topology."""
+    net_file = _find_net_file(project_dir)
+    if net_file is None:
+        return None
+    try:
+        with open(net_file, encoding="utf-8-sig") as file:
+            for _ in range(10):
+                line = file.readline()
+                if not line:
+                    break
+                match = re.match(r"^\s*version\s*=\s*(\S+)\s*$", line, re.IGNORECASE)
+                if match:
+                    return match.group(1)
+    except (OSError, UnicodeError):
+        return None
+    return None
+
+
 class HCLProjectRepository(ProjectRepository):
     """Filesystem-backed HCL project repository.
 
@@ -239,6 +278,15 @@ class HCLProjectRepository(ProjectRepository):
 
         Returns (projects, next_cursor). next_cursor is None when there are no more pages.
         """
+        return await asyncio.to_thread(self._list_projects_sync, query, limit, cursor)
+
+    def _list_projects_sync(
+        self,
+        query: str | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[LabProject], str | None]:
+        """Blocking project scan executed outside the MCP event loop."""
         all_projects: list[LabProject] = []
 
         for projects_dir in self._projects_dirs:
@@ -253,7 +301,7 @@ class HCLProjectRepository(ProjectRepository):
                         continue
 
                     try:
-                        project = await self.get_project(entry.name)
+                        project = self._get_project_sync(entry.name)
                         all_projects.append(project)
                     except DomainError as e:
                         # Collect skipped project info for diagnostics
@@ -294,9 +342,14 @@ class HCLProjectRepository(ProjectRepository):
 
         Scans all configured projects_dirs for a directory matching project_id.
         """
+        return await asyncio.to_thread(self._get_project_sync, project_id)
+
+    def _get_project_sync(self, project_id: str) -> LabProject:
+        """Blocking project lookup executed outside the MCP event loop."""
+        _validate_project_id(project_id)
         for projects_dir in self._projects_dirs:
             _validate_project_path(projects_dir)
-            project_dir = os.path.join(projects_dir, project_id)
+            project_dir = _resolve_project_dir(projects_dir, project_id)
 
             if not os.path.isdir(project_dir):
                 continue
@@ -315,7 +368,7 @@ class HCLProjectRepository(ProjectRepository):
 
             name = str(data.get("name", project_id))
             hcl_version_raw = data.get("version")
-            hcl_version = str(hcl_version_raw) if hcl_version_raw is not None else None
+            hcl_version = str(hcl_version_raw or "").strip() or _read_net_version(project_dir)
             devices = data.get("devices", [])
             device_count = len(devices) if isinstance(devices, list) else 0
 
@@ -347,8 +400,17 @@ class HCLProjectRepository(ProjectRepository):
         Combines data from project.json and .net file, cross-validating
         that devices appear in both.
         """
+        return await asyncio.to_thread(self._get_topology_sync, project_id, include_positions)
+
+    def _get_topology_sync(
+        self,
+        project_id: str,
+        include_positions: bool = False,
+    ) -> Topology:
+        """Blocking topology parse executed outside the MCP event loop."""
+        del include_positions  # positions are not exposed by HCL 5.10 project files
         # First, verify the project exists
-        lab_project = await self.get_project(project_id)
+        lab_project = self._get_project_sync(project_id)
         project_dir = lab_project.path
 
         # Read project.json for device list
@@ -381,7 +443,7 @@ class HCLProjectRepository(ProjectRepository):
         # Parse .net file FIRST for authoritative device IDs and names
         net_file = _find_net_file(project_dir)
         warnings: list[str] = []
-        net_devices_list: list = []
+        net_devices_list: list[NetDeviceEntry] = []
         links: list[Link] = []
 
         if net_file is not None:
@@ -392,6 +454,7 @@ class HCLProjectRepository(ProjectRepository):
         # Build device refs, resolving IDs from .net via resourceName matching
         device_refs: dict[int, DeviceRef] = {}
         net_name_to_id = {nd.name: nd.device_id for nd in net_devices_list}
+        net_name_to_id_folded = {nd.name.casefold(): nd.device_id for nd in net_devices_list}
         net_id_to_net_dev = {nd.device_id: nd for nd in net_devices_list}
 
         for d in json_devices:
@@ -404,17 +467,19 @@ class HCLProjectRepository(ProjectRepository):
             # Resolve device ID: .net is authoritative when available
             if did <= 0 and device_name and device_name in net_name_to_id:
                 did = net_name_to_id[device_name]
+            elif did <= 0 and device_name.casefold() in net_name_to_id_folded:
+                did = net_name_to_id_folded[device_name.casefold()]
             elif did <= 0:
-                warnings.append(
-                    f"Device {device_name!r} has no device_id and not found in .net"
-                )
+                warnings.append(f"Device {device_name!r} has no device_id and not found in .net")
                 continue  # skip devices we can't identify
 
+            net_device = net_id_to_net_dev.get(did)
+            canonical_name = net_device.name if net_device is not None else device_name
             device_refs[did] = DeviceRef(
                 project_id=project_id,
                 device_id=did,
-                name=device_name,
-                model=str(d.get("model", "")),
+                name=canonical_name,
+                model=str(d.get("model", "")) or (net_device.model if net_device else ""),
                 comware_version=str(d.get("version", "")),
                 config_path=str(d.get("configPath", "")),
                 category=str(d.get("category", "")),
@@ -430,9 +495,7 @@ class HCLProjectRepository(ProjectRepository):
                     model=nd.model or "",
                     category=nd.device_type or "",
                 )
-                warnings.append(
-                    f"Device {nd.name!r} (id={nd.device_id}) in .net but not in project.json"
-                )
+                warnings.append(f"Device {nd.name!r} (id={nd.device_id}) in .net but not in project.json")
 
         if not device_refs:
             warnings.append("No identifiable devices found in project")

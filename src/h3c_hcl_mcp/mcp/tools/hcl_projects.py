@@ -49,8 +49,20 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 limit=max(1, min(limit, 200)),
             )
 
+            # The repository needs absolute paths internally, but MCP clients
+            # do not. Avoid exposing local usernames and directory layouts.
+            public_projects = [
+                {
+                    "project_id": project.project_id,
+                    "name": project.name,
+                    "hcl_version": project.hcl_version,
+                    "device_count": project.device_count,
+                    "updated_at": project.updated_at,
+                }
+                for project in projects
+            ]
             data: dict[str, Any] = {
-                "projects": [p.model_dump() for p in projects],
+                "projects": public_projects,
                 "count": len(projects),
             }
             if next_cursor:
@@ -86,11 +98,20 @@ def register(mcp: FastMCP, **deps: Any) -> None:
 
         try:
             topology = await project_repo.get_topology(project_id)
+            public_topology = topology.to_dict()
+            devices = public_topology.get("devices")
+            if isinstance(devices, list):
+                for device in devices:
+                    if isinstance(device, dict):
+                        # Configuration file locations are an adapter concern.
+                        # They may contain local usernames or untrusted absolute
+                        # paths from copied project metadata.
+                        device.pop("config_path", None)
 
             duration_ms = (time.monotonic() - start) * 1000
             return ToolResult.success(
                 request_id=request_id,
-                data=topology.to_dict(),
+                data=public_topology,
                 target={"project_id": project_id},
                 warnings=topology.warnings,
                 duration_ms=round(duration_ms, 2),

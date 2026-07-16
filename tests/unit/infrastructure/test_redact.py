@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from h3c_hcl_mcp.infrastructure.audit.redact import (
     quick_redact,
     redact_sensitive,
@@ -62,6 +64,41 @@ class TestSNMPRedaction:
         result = redact_sensitive(text)
         assert "mystring" not in result
         assert "***" in result
+
+    def test_snmpv3_auth_and_privacy_secrets(self) -> None:
+        text = (
+            "snmp-agent usm-user v3 netops group1 authentication-mode sha auth-secret "
+            "privacy-mode aes128 priv-secret"
+        )
+
+        result = redact_sensitive(text)
+
+        assert "auth-secret" not in result
+        assert "priv-secret" not in result
+        assert result == "snmp-agent usm-user *** REDACTED ***"
+
+
+class TestPrivateKeyRedaction:
+    @pytest.mark.parametrize(
+        "label",
+        ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "OPENSSH PRIVATE KEY", "ENCRYPTED PRIVATE KEY"],
+    )
+    def test_complete_private_key_blocks(self, label: str) -> None:
+        text = f"before\n-----BEGIN {label}-----\nvery-secret-key\n-----END {label}-----\nafter"
+
+        result = redact_sensitive(text)
+
+        assert "very-secret-key" not in result
+        assert "BEGIN" not in result
+        assert result == "before\n*** PRIVATE MATERIAL REDACTED ***\nafter"
+
+    def test_truncated_private_key_block(self) -> None:
+        text = "before\n-----BEGIN OPENSSH PRIVATE KEY-----\ntruncated-secret"
+
+        result = redact_sensitive(text)
+
+        assert "truncated-secret" not in result
+        assert result == "before\n*** PRIVATE MATERIAL REDACTED ***"
 
 
 class TestLocalUserRedaction:

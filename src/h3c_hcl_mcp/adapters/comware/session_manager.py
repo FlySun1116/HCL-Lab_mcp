@@ -10,6 +10,7 @@ routes connect/execute/close to the right per-device session underneath.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import logging
 
 from h3c_hcl_mcp.adapters.comware.console_telnet import ConsoleTelnetTransport
@@ -31,9 +32,10 @@ class DeviceSessionManager:
     Each device gets an exclusive session lock.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, connect_timeout_seconds: float = 5.0) -> None:
         self._sessions: dict[_DEVICE_KEY, DeviceSession] = {}
         self._transports: dict[_DEVICE_KEY, ConsoleTelnetTransport] = {}
+        self._connect_timeout_seconds = connect_timeout_seconds
 
     def get_or_create_session(self, project_id: str, device_id: int, device_name: str = "") -> DeviceSession:
         """Get an existing session or create a new one."""
@@ -50,7 +52,10 @@ class DeviceSessionManager:
         key = (project_id, device_id)
         if key not in self._transports:
             session = self.get_or_create_session(project_id, device_id)
-            self._transports[key] = ConsoleTelnetTransport(session)
+            self._transports[key] = ConsoleTelnetTransport(
+                session,
+                connect_timeout_seconds=self._connect_timeout_seconds,
+            )
         return self._transports[key]
 
     async def close_device(self, project_id: str, device_id: int) -> None:
@@ -97,8 +102,10 @@ class SessionManagerTransport(DeviceTransport):
 
     def __init__(self, manager: DeviceSessionManager) -> None:
         self._manager = manager
-        self._current_key: _DEVICE_KEY | None = None
-        self._current_transport: ConsoleTelnetTransport | None = None
+        self._current_key: contextvars.ContextVar[_DEVICE_KEY | None] = contextvars.ContextVar(
+            f"h3c_current_device_{id(self)}",
+            default=None,
+        )
 
     async def connect(self, endpoint: RuntimeEndpoint) -> None:
         """Connect to a device via the given endpoint.
@@ -116,30 +123,41 @@ class SessionManagerTransport(DeviceTransport):
             )
         device_id = int(device_id_str)
 
-        self._current_key = (project_id, device_id)
-        self._current_transport = self._manager.get_or_create_transport(project_id, device_id)
+        key = (project_id, device_id)
+        current_transport = self._manager.get_or_create_transport(project_id, device_id)
 
         session = self._manager.get_or_create_session(project_id, device_id)
-        if not session.is_connected:
-            await self._current_transport.connect(endpoint)
+        async with session.lock:
+            if not session.is_connected:
+                await current_transport.connect(endpoint)
+        self._current_key.set(key)
 
     async def execute(self, request: CommandRequest) -> CommandResult:
         """Execute a command on the currently connected device."""
-        if self._current_transport is None:
+        key = self._current_key.get()
+        if key is None:
             raise DomainError(
                 ErrorCode.CONNECTION_CLOSED,
                 "Not connected. Call connect() first.",
             )
-        return await self._current_transport.execute(request)
+        request_key = (request.target.project_id, request.target.device_id)
+        if request_key != key:
+            raise DomainError(
+                ErrorCode.INVALID_ARGUMENT,
+                "Command target does not match the connected device",
+                {"project_id": request.target.project_id, "device_id": request.target.device_id},
+            )
+        return await self._manager.get_or_create_transport(*key).execute(request)
 
     async def execute_config(self, commands: list[str], timeout_seconds: float = 30.0) -> CommandResult:
         """Configuration writes are disabled in v0.1."""
-        if self._current_transport is None:
+        key = self._current_key.get()
+        if key is None:
             raise DomainError(
                 ErrorCode.CONNECTION_CLOSED,
                 "Not connected.",
             )
-        return await self._current_transport.execute_config(commands, timeout_seconds)
+        return await self._manager.get_or_create_transport(*key).execute_config(commands, timeout_seconds)
 
     async def close(self) -> None:
         """Soft-release: clears the current transport reference.
@@ -147,12 +165,11 @@ class SessionManagerTransport(DeviceTransport):
         The underlying session stays alive for reuse.
         Use close_permanent() to fully tear down the session.
         """
-        self._current_transport = None
-        self._current_key = None
+        self._current_key.set(None)
 
     async def close_permanent(self) -> None:
         """Permanently close the current device session."""
-        if self._current_key is not None:
-            await self._manager.close_device(*self._current_key)
-        self._current_transport = None
-        self._current_key = None
+        key = self._current_key.get()
+        if key is not None:
+            await self._manager.close_device(*key)
+        self._current_key.set(None)

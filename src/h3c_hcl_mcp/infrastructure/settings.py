@@ -18,7 +18,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Configuration directory
@@ -54,6 +54,11 @@ def _default_config_paths() -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+def _expand_path(value: str) -> str:
+    """Expand user-home and environment references in path settings."""
+    return os.path.expanduser(os.path.expandvars(value))
+
+
 class TransportMode(StrEnum):
     STDIO = "stdio"
     SSE = "sse"
@@ -77,6 +82,18 @@ class ServerSettings(BaseModel):
     max_tool_seconds: int = Field(default=60, ge=1, le=600)
     max_output_chars: int = Field(default=32768, ge=256, le=1048576)
     config_dir: str = Field(default_factory=lambda: str(_default_config_dir()))
+
+    @field_validator("config_dir", mode="before")
+    @classmethod
+    def _expand_config_dir(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
+
+    @field_validator("transport")
+    @classmethod
+    def _require_stdio_for_v01(cls, value: TransportMode) -> TransportMode:
+        if value != TransportMode.STDIO:
+            raise ValueError("v0.1 supports only the stdio transport")
+        return value
 
 
 class PolicySettings(BaseModel):
@@ -127,6 +144,18 @@ class HCLDiscoverySettings(BaseModel):
     runtime_discovery: HCLRuntimeDiscoverySettings = Field(default_factory=HCLRuntimeDiscoverySettings)
     private_control_api: PrivateControlAPISettings = Field(default_factory=PrivateControlAPISettings)
 
+    @field_validator("projects_dirs", mode="before")
+    @classmethod
+    def _expand_projects_dirs(cls, value: Any) -> Any:
+        if isinstance(value, (list, tuple)):
+            return [_expand_path(item) if isinstance(item, str) else item for item in value]
+        return value
+
+    @field_validator("install_dir", mode="before")
+    @classmethod
+    def _expand_install_dir(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
+
 
 class SSHSettings(BaseModel):
     """SSH connection settings."""
@@ -136,6 +165,11 @@ class SSHSettings(BaseModel):
     username_env: str = "H3C_HCL_MCP_SSH_USERNAME"
     password_env: str = "H3C_HCL_MCP_SSH_PASSWORD"
     known_hosts: str = ""
+
+    @field_validator("known_hosts", mode="before")
+    @classmethod
+    def _expand_known_hosts(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
 
 
 class DeviceSettings(BaseModel):
@@ -149,6 +183,23 @@ class DeviceSettings(BaseModel):
     per_device_concurrency: int = Field(default=1, ge=1, le=8)
     ssh: SSHSettings = Field(default_factory=SSHSettings)
 
+    @field_validator("preferred_transports")
+    @classmethod
+    def _validate_preferred_transports(cls, value: list[str]) -> list[str]:
+        allowed = {"console_telnet", "ssh"}
+        if not value or any(item not in allowed for item in value):
+            raise ValueError("preferred_transports must contain only console_telnet and/or ssh")
+        if len(value) != len(set(value)):
+            raise ValueError("preferred_transports must not contain duplicates")
+        return value
+
+    @field_validator("per_device_concurrency")
+    @classmethod
+    def _require_exclusive_device_session(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError("v0.1 requires per_device_concurrency=1")
+        return value
+
 
 class AuditSettings(BaseModel):
     """Audit trail configuration."""
@@ -159,6 +210,11 @@ class AuditSettings(BaseModel):
     database: str = ""
     retention_days: int = Field(default=90, ge=1, le=365)
     store_raw_device_output: bool = False
+
+    @field_validator("database", mode="before")
+    @classmethod
+    def _expand_database(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
 
 
 class HCLSettings(BaseModel):
@@ -217,8 +273,17 @@ def _load_from_env() -> dict[str, Any]:
     return result
 
 
-def _coerce_value(value: str) -> int | float | bool | str:
+def _coerce_value(value: str) -> int | float | bool | str | list[Any] | dict[str, Any]:
     """Coerce string env var to the most appropriate Python type."""
+    stripped = value.strip()
+    if stripped.startswith(("[", "{")):
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(decoded, (list, dict)):
+                return decoded
     # Bool
     if value.lower() in ("true", "yes", "1"):
         return True
@@ -429,9 +494,14 @@ def load_settings(
         Fully validated HCLSettings instance.
 
     Raises:
-        SystemExit: On missing/malformed config, or unknown fields.
+        SystemExit: When an explicitly selected config file is missing,
+            a discovered config file is malformed, or fields are unknown.
     """
     # --- Layer 3: Config file ---
+    if config_path is None:
+        environment_config = os.environ.get("H3C_HCL_MCP_CONFIG", "").strip()
+        if environment_config:
+            config_path = environment_config
     config_data: dict[str, Any] | None
     if config_path is not None:
         path = Path(config_path)
@@ -445,16 +515,10 @@ def load_settings(
     else:
         config_data = _try_default_config()
         if config_data is None:
-            default_paths = _default_config_paths()
-            print(
-                "ERROR: No configuration file found.\n"
-                "Place a config.yaml or config.json in one of these locations:\n  "
-                + "\n  ".join(str(p) for p in default_paths)
-                + "\n\nOr use --config FILE to specify a path.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    assert config_data is not None  # narrowed by sys.exit above
+            # A config file is optional.  Starting from model defaults keeps a
+            # first-run stdio server safe (read-only) while still allowing
+            # environment variables and CLI options to provide all settings.
+            config_data = {}
 
     # --- Layer 2: Environment variables ---
     merged = config_data

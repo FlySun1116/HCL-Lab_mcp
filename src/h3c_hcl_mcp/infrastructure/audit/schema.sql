@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
     tool TEXT NOT NULL,
     target TEXT,  -- JSON: serialized dict with project_id, device_id, device_name
     policy_result TEXT DEFAULT 'allowed',
+    outcome TEXT NOT NULL DEFAULT 'success',
     change_summary TEXT,
     timestamp TEXT NOT NULL,
     duration_ms REAL DEFAULT 0,

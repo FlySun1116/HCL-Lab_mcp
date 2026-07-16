@@ -56,8 +56,15 @@ class ConsoleTelnetTransport(DeviceTransport):
     Each instance is bound to a single device session.
     """
 
-    def __init__(self, session: DeviceSession) -> None:
+    def __init__(
+        self,
+        session: DeviceSession,
+        connect_timeout_seconds: float = 5.0,
+        prompt_timeout_seconds: float = _DEFAULT_PROMPT_TIMEOUT,
+    ) -> None:
         self._session = session
+        self._connect_timeout_seconds = max(0.1, connect_timeout_seconds)
+        self._prompt_timeout_seconds = max(0.1, prompt_timeout_seconds)
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._current_prompt: str | None = None
@@ -80,7 +87,7 @@ class ConsoleTelnetTransport(DeviceTransport):
         try:
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(endpoint.host, endpoint.port),
-                timeout=endpoint.confidence if endpoint.confidence > 0 else _DEFAULT_PROMPT_TIMEOUT,
+                timeout=self._connect_timeout_seconds,
             )
         except TimeoutError:
             self._session.state = SessionState.DISCONNECTED
@@ -100,9 +107,19 @@ class ConsoleTelnetTransport(DeviceTransport):
         self._connected = True
 
         try:
-            await self._wait_for_prompt(timeout=_DEFAULT_PROMPT_TIMEOUT)
+            await self._wait_for_prompt(timeout=self._prompt_timeout_seconds)
         except DomainError:
-            self._session.state = SessionState.DISCONNECTED
+            await self.close()
+            raise
+        except OSError as exc:
+            await self.close()
+            raise DomainError(
+                ErrorCode.CONNECTION_CLOSED,
+                "Connection closed while waiting for the CLI prompt",
+                {"device_id": self._session.device_id},
+            ) from exc
+        except asyncio.CancelledError:
+            await self.close()
             raise
 
         self._session.state = SessionState.READY
@@ -157,7 +174,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                 )
             except TimeoutError:
                 duration = (time.monotonic() - start) * 1000
-                self._session.state = SessionState.READY
+                await self.close()
                 raise DomainError(
                     ErrorCode.COMMAND_TIMEOUT,
                     f"Command timed out after {request.timeout_seconds:.0f}s",
@@ -167,6 +184,19 @@ class ConsoleTelnetTransport(DeviceTransport):
                         "duration_ms": duration,
                     },
                 ) from None
+            except DomainError:
+                await self.close()
+                raise
+            except OSError as exc:
+                await self.close()
+                raise DomainError(
+                    ErrorCode.CONNECTION_CLOSED,
+                    "Connection closed while executing the command",
+                    {"device_id": self._session.device_id},
+                ) from exc
+            except asyncio.CancelledError:
+                await self.close()
+                raise
 
             duration = (time.monotonic() - start) * 1000
 
@@ -175,8 +205,26 @@ class ConsoleTelnetTransport(DeviceTransport):
             self._current_prompt = prompt
 
             truncated = len(raw_output) >= request.max_output_chars
+            if prompt is None and not truncated:
+                await self.close()
+                raise DomainError(
+                    ErrorCode.COMMAND_TIMEOUT,
+                    f"Command timed out after {request.timeout_seconds:.0f}s",
+                    {
+                        "command": request.command,
+                        "device_id": self._session.device_id,
+                        "duration_ms": duration,
+                    },
+                )
 
-            self._session.state = SessionState.READY
+            # A truncated stream or a peer that closed after the final prompt
+            # cannot be safely reused: unread/late bytes could be mistaken for
+            # the next command's response.
+            peer_closed = self._reader is None or self._reader.at_eof()
+            if truncated or peer_closed:
+                await self.close()
+            else:
+                self._session.state = SessionState.READY
 
             return CommandResult(
                 target=request.target,
@@ -265,7 +313,7 @@ class ConsoleTelnetTransport(DeviceTransport):
             f"No CLI prompt detected within {timeout:.0f}s",
             {
                 "device_id": self._session.device_id,
-                "buffer_tail": buffer[-200:] if len(buffer) > 200 else buffer,
+                "received_chars": len(buffer),
             },
         )
 
@@ -315,7 +363,11 @@ class ConsoleTelnetTransport(DeviceTransport):
                 continue
 
             if not data:
-                break
+                raise DomainError(
+                    ErrorCode.CONNECTION_CLOSED,
+                    "Connection closed before the command prompt was received",
+                    {"device_id": self._session.device_id},
+                )
 
             clean = _filter_iac(data)
             if clean:

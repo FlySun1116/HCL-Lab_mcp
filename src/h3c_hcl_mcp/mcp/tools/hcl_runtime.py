@@ -46,14 +46,6 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             # Validate project exists before checking runtime
             await project_repo.get_project(project_id)
 
-            # Feed topology devices into runtime discovery for auto-detection
-            topology = await project_repo.get_topology(project_id)
-            if hasattr(runtime_disc, "set_topology_devices"):
-                runtime_disc.set_topology_devices(
-                    project_id,
-                    [(d.device_id, d.name) for d in topology.devices],
-                )
-
             runtimes = await runtime_disc.discover_project(project_id)
 
             devices_data = []

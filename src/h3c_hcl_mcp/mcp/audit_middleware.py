@@ -6,15 +6,32 @@ successful and failed calls.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
+from mcp.server.fastmcp.exceptions import ToolError
+
 from h3c_hcl_mcp.domain.audit import AuditEvent
 from h3c_hcl_mcp.domain.errors import DomainError
+from h3c_hcl_mcp.domain.result import ToolResult
+from h3c_hcl_mcp.mcp.error_mapping import extract_structured_error
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
+
+logger = logging.getLogger(__name__)
+
+_POLICY_ERROR_CODES = {
+    "APPROVAL_EXPIRED",
+    "APPROVAL_INVALID",
+    "APPROVAL_REQUIRED",
+    "COMMAND_DENIED",
+    "COMMAND_NOT_ALLOWED",
+    "POLICY_DENIED",
+    "WRITE_DISABLED",
+}
 
 
 def with_audit(
@@ -43,37 +60,63 @@ def with_audit(
             error_code = None
             policy_result = "allowed"
             change_summary = None
+            cancelled = False
 
             try:
                 result = func(*args, **kwargs)
                 if asyncio.iscoroutine(result):
                     result = await result
+                response_request_id = _extract_result_request_id(result)
+                if response_request_id:
+                    request_id = response_request_id
                 return result
             except DomainError as e:
                 error_code = e.code.value
-                policy_result = "denied"
+                policy_result = _policy_result_for_error(error_code)
+                raise
+            except ToolError as e:
+                structured = extract_structured_error(e)
+                if structured is not None:
+                    structured_request_id = structured.get("request_id")
+                    structured_code = structured.get("code")
+                    if isinstance(structured_request_id, str) and structured_request_id:
+                        request_id = structured_request_id
+                    if isinstance(structured_code, str) and structured_code:
+                        error_code = structured_code
+                if error_code is None:
+                    error_code = "INTERNAL_ERROR"
+                policy_result = _policy_result_for_error(error_code)
                 raise
             except Exception:
                 error_code = "INTERNAL_ERROR"
-                policy_result = "denied"
+                policy_result = "not_evaluated"
+                raise
+            except asyncio.CancelledError:
+                # The ToolManager timeout boundary owns timeout mapping and
+                # auditing. Avoid emitting a second, falsely successful event.
+                cancelled = True
                 raise
             finally:
-                duration_ms = (time.monotonic() - start) * 1000
-                try:
-                    event = AuditEvent(
-                        event_id=str(uuid.uuid4()),
-                        request_id=request_id,
-                        caller=caller,
-                        tool=tool_name,
-                        target=_extract_target(kwargs),
-                        policy_result=policy_result,
-                        change_summary=change_summary,
-                        duration_ms=round(duration_ms, 2),
-                        error_code=error_code,
-                    )
-                    await audit_sink.append(event)
-                except Exception:
-                    pass  # Audit failure must not break the tool
+                if not cancelled:
+                    duration_ms = (time.monotonic() - start) * 1000
+                    try:
+                        event = AuditEvent(
+                            event_id=str(uuid.uuid4()),
+                            request_id=request_id,
+                            caller=caller,
+                            tool=tool_name,
+                            target=_extract_target(kwargs),
+                            policy_result=policy_result,
+                            outcome="error" if error_code else "success",
+                            change_summary=change_summary,
+                            duration_ms=round(duration_ms, 2),
+                            error_code=error_code,
+                        )
+                        await audit_sink.append(event)
+                    except Exception as e:
+                        # Audit failure must not break the tool, but it must remain
+                        # observable to operators instead of being silently lost.
+                        logger.warning("Failed to append audit event for %s: %s", tool_name, e)
 
         return wrapper
 
@@ -90,3 +133,23 @@ def _extract_target(kwargs: dict[str, Any]) -> dict[str, object] | None:
             target["device_id"] = int(str(device_id))
         return target
     return None
+
+
+def _extract_result_request_id(result: Any) -> str | None:
+    """Return the request ID from a tool result before FastMCP conversion."""
+    if isinstance(result, ToolResult):
+        return result.request_id
+    if isinstance(result, dict):
+        request_id = result.get("request_id")
+        return request_id if isinstance(request_id, str) and request_id else None
+    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
+        request_id = result[1].get("request_id")
+        return request_id if isinstance(request_id, str) and request_id else None
+    return None
+
+
+def _policy_result_for_error(error_code: str) -> str:
+    """Classify policy decisions independently from invocation failures."""
+    if error_code in _POLICY_ERROR_CODES:
+        return "denied"
+    return "not_evaluated"

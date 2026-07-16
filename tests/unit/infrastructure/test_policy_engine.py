@@ -142,6 +142,52 @@ class TestValidateCommand:
         assert exc_info.value.details
         assert exc_info.value.details["command"] == "reset saved"
 
+    @pytest.mark.asyncio
+    async def test_configured_display_allowlist_can_only_restrict(self) -> None:
+        engine = PolicyEngineImpl(PolicySettings(allow_display_prefixes=["display version"]))
+        allowed = CommandRequest(
+            target=CommandTarget(project_id="test", device_id=1),
+            command="display version",
+            command_type=CommandType.DISPLAY,
+        )
+        restricted = allowed.model_copy(update={"command": "display interface brief"})
+
+        assert await engine.validate_command(allowed) is True
+        with pytest.raises(DomainError) as exc_info:
+            await engine.validate_command(restricted)
+        assert exc_info.value.code == ErrorCode.COMMAND_NOT_ALLOWED
+
+    @pytest.mark.asyncio
+    async def test_configured_deny_pattern_takes_precedence(self) -> None:
+        engine = PolicyEngineImpl(
+            PolicySettings(
+                allow_display_prefixes=["display interface"],
+                deny_patterns=["brief"],
+            )
+        )
+        request = CommandRequest(
+            target=CommandTarget(project_id="test", device_id=1),
+            command="DISPLAY INTERFACE BRIEF",
+            command_type=CommandType.DISPLAY,
+        )
+
+        with pytest.raises(DomainError) as exc_info:
+            await engine.validate_command(request)
+        assert exc_info.value.code == ErrorCode.COMMAND_NOT_ALLOWED
+
+    @pytest.mark.asyncio
+    async def test_configured_allowlist_cannot_override_builtin_denials(self) -> None:
+        engine = PolicyEngineImpl(PolicySettings(allow_display_prefixes=["display version; reboot"]))
+        request = CommandRequest(
+            target=CommandTarget(project_id="test", device_id=1),
+            command="display version; reboot",
+            command_type=CommandType.DISPLAY,
+        )
+
+        with pytest.raises(DomainError) as exc_info:
+            await engine.validate_command(request)
+        assert exc_info.value.code == ErrorCode.COMMAND_NOT_ALLOWED
+
 
 class TestValidateChange:
     """validate_change returns risk levels."""

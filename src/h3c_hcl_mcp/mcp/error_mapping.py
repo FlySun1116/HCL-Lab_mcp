@@ -11,7 +11,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
 from mcp.server.fastmcp.exceptions import ToolError
 
@@ -19,6 +19,70 @@ from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.result import ToolResult
 
 logger = logging.getLogger(__name__)
+
+_PATH_DETAIL_KEYS = {"path", "project_path", "config_path", "file_path"}
+_UNTRUSTED_OUTPUT_DETAIL_KEYS = {
+    "banner",
+    "buffer_tail",
+    "device_output",
+    "raw_output",
+    "transcript",
+}
+_PATH_SAFE_MESSAGES = {
+    ErrorCode.PROJECT_NOT_FOUND: "HCL project metadata was not found",
+    ErrorCode.PROJECT_DAMAGED: "HCL project data is damaged or unreadable",
+    ErrorCode.PROJECT_PATH_TRAVERSAL: "HCL project path is not allowed",
+}
+
+
+def structured_error_payload(
+    *,
+    code: str,
+    message: str,
+    request_id: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the stable error payload exposed to MCP clients.
+
+    ``request_id`` deliberately lives inside the ``error`` object.  FastMCP
+    serializes :class:`ToolError` as error content rather than as a normal
+    ``ToolResult`` envelope, so keeping the identifier only on ToolResult
+    would make failed calls impossible to correlate with the audit trail.
+    """
+    error: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "request_id": request_id,
+    }
+    if details:
+        error.update(details)
+    return {"error": error}
+
+
+def extract_structured_error(error: BaseException) -> dict[str, Any] | None:
+    """Extract our JSON error object from a ToolError exception chain.
+
+    FastMCP may prefix a nested ToolError with ``Error executing tool ...``.
+    This parser intentionally looks only for JSON objects containing an
+    ``error`` mapping; it never exposes arbitrary exception text to clients.
+    """
+    decoder = json.JSONDecoder()
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current)
+        for offset, character in enumerate(message):
+            if character != "{":
+                continue
+            try:
+                candidate, _ = decoder.raw_decode(message[offset:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict) and isinstance(candidate.get("error"), dict):
+                return cast(dict[str, Any], candidate["error"])
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def map_domain_error(error: DomainError, request_id: str) -> ToolResult:
@@ -34,22 +98,33 @@ def map_domain_error(error: DomainError, request_id: str) -> ToolResult:
     Raises:
         ToolError: Always, to set MCP isError=true.
     """
-    logger.warning(
-        "Mapping domain error: code=%s message=%s request_id=%s",
-        error.code.value,
-        error.message,
-        request_id,
-    )
+    logger.warning("Mapping domain error: code=%s request_id=%s", error.code.value, request_id)
 
-    result = ToolResult.failure(
-        request_id=request_id,
-        code=error.code.value,
-        message=error.message,
-        details=error.details,
-    )
+    message, details = _public_domain_error(error)
+
     # Raise ToolError to set MCP isError=true with structured error payload
-    error_payload = {"error": result.data.get("error", {})} if result.data else {}
+    error_payload = structured_error_payload(
+        code=error.code.value,
+        message=message,
+        request_id=request_id,
+        details=details,
+    )
     raise ToolError(json.dumps(error_payload)) from error
+
+
+def _public_domain_error(error: DomainError) -> tuple[str, dict[str, Any] | None]:
+    """Remove filesystem locations from errors crossing the MCP boundary."""
+    details = dict(error.details) if error.details else {}
+    removed_path = any(key in details for key in _PATH_DETAIL_KEYS)
+    for key in _PATH_DETAIL_KEYS:
+        details.pop(key, None)
+    for key in _UNTRUSTED_OUTPUT_DETAIL_KEYS:
+        details.pop(key, None)
+
+    message = error.message
+    if removed_path:
+        message = _PATH_SAFE_MESSAGES.get(error.code, error.code.value)
+    return message, details or None
 
 
 def handle_errors[**P, R](
@@ -110,12 +185,11 @@ def internal_error(request_id: str, message: str = "Internal server error") -> T
     Raises ToolError to set MCP isError=true.
     """
     logger.exception("Internal error: %s [request_id=%s]", message, request_id)
-    result = ToolResult.failure(
-        request_id=request_id,
+    error_payload = structured_error_payload(
         code=ErrorCode.INTERNAL_ERROR.value,
         message=message,
+        request_id=request_id,
     )
-    error_payload = {"error": result.data.get("error", {})} if result.data else {}
     raise ToolError(json.dumps(error_payload))
 
 
@@ -125,10 +199,9 @@ def not_implemented(request_id: str, feature: str = "") -> ToolResult:
     Raises ToolError to set MCP isError=true.
     """
     msg = f"Not implemented: {feature}" if feature else "Not implemented"
-    result = ToolResult.failure(
-        request_id=request_id,
+    error_payload = structured_error_payload(
         code=ErrorCode.NOT_IMPLEMENTED.value,
         message=msg,
+        request_id=request_id,
     )
-    error_payload = {"error": result.data.get("error", {})} if result.data else {}
     raise ToolError(json.dumps(error_payload))

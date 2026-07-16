@@ -1,14 +1,17 @@
-"""HCL log observer — parse HCL runtime logs for port and state discovery.
+"""Read-only HCL 5.10.x log observation for console discovery.
 
-v0.1: Parses synthetic log data for testing. Real HCL log file monitoring
-will be implemented for v0.1.0-beta when HCL 5.10.x integration is available.
+The observer deliberately consumes only HCL's ordinary text logs.  It does
+not connect to HCL's private control services.  A log-derived endpoint is a
+candidate: runtime discovery must still probe it before exposing it as usable.
 """
 
 from __future__ import annotations
 
+import ntpath
 import re
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 
 from h3c_hcl_mcp.domain.device import DiscoverySource, RuntimeEndpoint, TransportType
 
@@ -16,6 +19,12 @@ from h3c_hcl_mcp.domain.device import DiscoverySource, RuntimeEndpoint, Transpor
 class LogEventType(StrEnum):
     """Types of events extractable from HCL logs."""
 
+    # Real HCL 5.10.x events.
+    PROJECT_BOUND = "project_bound"
+    CONSOLE_CREATED = "console_created"
+    CONSOLE_CLOSED = "console_closed"
+
+    # Backward-compatible synthetic events used by existing fixtures.
     DEVICE_STARTED = "device_started"
     DEVICE_STOPPED = "device_stopped"
     CONSOLE_PORT_ALLOCATED = "console_port_allocated"
@@ -33,6 +42,9 @@ class LogEvent:
         device_name: str | None = None,
         device_id: int | None = None,
         console_port: int | None = None,
+        topology_alias: str | None = None,
+        project_id: str | None = None,
+        project_path: str | None = None,
         raw_line: str = "",
     ) -> None:
         self.event_type = event_type
@@ -40,44 +52,54 @@ class LogEvent:
         self.device_name = device_name
         self.device_id = device_id
         self.console_port = console_port
+        self.topology_alias = topology_alias
+        self.project_id = project_id
+        self.project_path = project_path
         self.raw_line = raw_line
 
     def __repr__(self) -> str:
         return (
-            f"LogEvent(type={self.event_type.value}, device={self.device_name!r}, port={self.console_port})"
+            f"LogEvent(type={self.event_type.value}, project={self.project_id!r}, "
+            f"alias={self.topology_alias!r}, device={self.device_name!r}, "
+            f"port={self.console_port})"
         )
 
 
-# ------------------------------------------------------------------
-# v0.1 synthetic log patterns — extend for real HCL log format
-# ------------------------------------------------------------------
+_TIMESTAMP = r"(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:,\d{1,6})?)"
 
-# Matches: "2024-01-01 12:00:00 Device S6850_1 (id=1) started, console port: 5000"
+# Real HCL 5.10.3 examples (paths and names are sanitized in test fixtures):
+#   ... HCL topo1 ... Workspace 1205 --- C:\...\project\project.net
+#   ... create_telnet_server success strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)
+_PROJECT_BOUND_PATTERN = re.compile(
+    _TIMESTAMP
+    + r"\s+-\s+HCL\s+(?P<alias>topo\d+)\s+-.*?Workspace\s+1205\s+---\s+"
+    + r"(?P<path>.+?\.net)\s*$",
+    re.IGNORECASE,
+)
+_REAL_CONSOLE_PATTERN = re.compile(
+    _TIMESTAMP
+    + r"\s+-\s+HCL\s+(?P<alias>topo\d+)\s+-.*?"
+    + r"(?P<action>create_telnet_server\s+success|close\s+telnet_server|clear\s+telnet\s+success)"
+    + r".*?strPipeName:.*?(?P<pipe_alias>topo\d+)-device(?P<id>\d+),\s*"
+    + r"telnet_port:(?P<port>\d+)",
+    re.IGNORECASE,
+)
+
+# Backward-compatible synthetic patterns.
 _STARTED_PATTERN = re.compile(
-    r"(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+"
-    r"Device\s+(?P<name>\S+)\s+\(id=(?P<id>\d+)\)\s+started,\s+"
-    r"console port:\s+(?P<port>\d+)"
+    _TIMESTAMP
+    + r"\s+Device\s+(?P<name>\S+)\s+\(id=(?P<id>\d+)\)\s+started,\s+"
+    + r"console port:\s+(?P<port>\d+)"
 )
-
-# Matches: "2024-01-01 12:00:00 Device S6850_1 (id=1) stopped"
-_STOPPED_PATTERN = re.compile(
-    r"(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+"
-    r"Device\s+(?P<name>\S+)\s+\(id=(?P<id>\d+)\)\s+stopped"
-)
-
-# Matches: "2024-01-01 12:00:00 Console port 5000 allocated to device 1"
+_STOPPED_PATTERN = re.compile(_TIMESTAMP + r"\s+Device\s+(?P<name>\S+)\s+\(id=(?P<id>\d+)\)\s+stopped")
 _PORT_ALLOCATED_PATTERN = re.compile(
-    r"(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+"
-    r"Console port\s+(?P<port>\d+)\s+allocated to device\s+(?P<id>\d+)"
+    _TIMESTAMP + r"\s+Console port\s+(?P<port>\d+)\s+allocated to device\s+(?P<id>\d+)"
 )
-
-# Matches: "2024-01-01 12:00:00 Console port 5000 released from device 1"
 _PORT_RELEASED_PATTERN = re.compile(
-    r"(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+"
-    r"Console port\s+(?P<port>\d+)\s+released from device\s+(?P<id>\d+)"
+    _TIMESTAMP + r"\s+Console port\s+(?P<port>\d+)\s+released from device\s+(?P<id>\d+)"
 )
 
-_PATTERNS: list[tuple[re.Pattern[str], LogEventType]] = [
+_SYNTHETIC_PATTERNS: list[tuple[re.Pattern[str], LogEventType]] = [
     (_STARTED_PATTERN, LogEventType.DEVICE_STARTED),
     (_STOPPED_PATTERN, LogEventType.DEVICE_STOPPED),
     (_PORT_ALLOCATED_PATTERN, LogEventType.CONSOLE_PORT_ALLOCATED),
@@ -86,35 +108,73 @@ _PATTERNS: list[tuple[re.Pattern[str], LogEventType]] = [
 
 
 def parse_timestamp(ts_str: str) -> datetime | None:
-    """Parse a timestamp string into a UTC datetime."""
-    try:
-        dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-        return dt.replace(tzinfo=UTC)
-    except (ValueError, TypeError):
+    """Parse an HCL timestamp into an aware datetime used for ordering."""
+    for timestamp_format in ("%Y-%m-%d %H:%M:%S,%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(ts_str, timestamp_format).replace(tzinfo=UTC)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _project_id_from_net_path(net_path: str) -> str | None:
+    """Return the project ID encoded by an HCL ``.net`` filename."""
+    filename = ntpath.basename(net_path.strip().strip('"'))
+    project_id, extension = ntpath.splitext(filename)
+    if extension.lower() != ".net" or not project_id:
         return None
+    return project_id
 
 
 def parse_log_line(line: str) -> LogEvent:
-    """Parse a single HCL log line into a LogEvent.
+    """Parse one real or synthetic HCL log line."""
+    project_match = _PROJECT_BOUND_PATTERN.search(line)
+    if project_match:
+        groups = project_match.groupdict()
+        project_path = groups["path"].strip().strip('"')
+        project_id = _project_id_from_net_path(project_path)
+        if project_id:
+            return LogEvent(
+                event_type=LogEventType.PROJECT_BOUND,
+                timestamp=parse_timestamp(groups["ts"]),
+                topology_alias=groups["alias"].lower(),
+                project_id=project_id,
+                project_path=project_path,
+                raw_line=line,
+            )
 
-    Returns a LogEvent with event_type=UNKNOWN if the line doesn't match
-    any known pattern.
-    """
-    for pattern, event_type in _PATTERNS:
+    console_match = _REAL_CONSOLE_PATTERN.search(line)
+    if console_match:
+        groups = console_match.groupdict()
+        alias = groups["alias"].lower()
+        pipe_alias = groups["pipe_alias"].lower()
+        # A mismatch is malformed/ambiguous and must never produce a candidate.
+        if alias == pipe_alias:
+            action = groups["action"].lower()
+            event_type = (
+                LogEventType.CONSOLE_CREATED
+                if action.startswith("create_telnet_server")
+                else LogEventType.CONSOLE_CLOSED
+            )
+            return LogEvent(
+                event_type=event_type,
+                timestamp=parse_timestamp(groups["ts"]),
+                topology_alias=alias,
+                device_id=int(groups["id"]),
+                console_port=int(groups["port"]),
+                raw_line=line,
+            )
+
+    for pattern, event_type in _SYNTHETIC_PATTERNS:
         match = pattern.search(line)
         if match:
             groups = match.groupdict()
-            timestamp = parse_timestamp(groups.get("ts", ""))
-            device_name = groups.get("name")
-            device_id = int(groups["id"]) if groups.get("id") else None
-            console_port = int(groups["port"]) if groups.get("port") else None
-
             return LogEvent(
                 event_type=event_type,
-                timestamp=timestamp,
-                device_name=device_name,
-                device_id=device_id,
-                console_port=console_port,
+                timestamp=parse_timestamp(groups.get("ts", "")),
+                device_name=groups.get("name"),
+                device_id=int(groups["id"]) if groups.get("id") else None,
+                console_port=int(groups["port"]) if groups.get("port") else None,
                 raw_line=line,
             )
 
@@ -122,99 +182,143 @@ def parse_log_line(line: str) -> LogEvent:
 
 
 def parse_log_lines(lines: list[str]) -> list[LogEvent]:
-    """Parse multiple HCL log lines.
-
-    Args:
-        lines: List of raw log line strings.
-
-    Returns:
-        List of parsed LogEvent objects. UNKNOWN events are filtered out.
-    """
+    """Parse multiple lines, filtering unrecognized log noise."""
     events = [parse_log_line(line) for line in lines]
-    return [e for e in events if e.event_type != LogEventType.UNKNOWN]
+    return [event for event in events if event.event_type != LogEventType.UNKNOWN]
+
+
+class _ObservedState:
+    """Internal chronological state reconstructed from log events."""
+
+    def __init__(self) -> None:
+        self.project_endpoints: dict[str, dict[int, RuntimeEndpoint]] = {}
+        self.closed_devices: dict[str, set[int]] = {}
+        self.legacy_endpoints: dict[int, RuntimeEndpoint] = {}
+
+
+def _endpoint_from_event(event: LogEvent, confidence: float = 0.9) -> RuntimeEndpoint:
+    if event.console_port is None:
+        raise ValueError("console event has no port")
+    extra: dict[str, str] = {}
+    if event.topology_alias:
+        extra["topology_alias"] = event.topology_alias
+    return RuntimeEndpoint(
+        transport=TransportType.CONSOLE_TELNET,
+        host="127.0.0.1",
+        port=event.console_port,
+        source=DiscoverySource.LOG,
+        confidence=confidence,
+        discovered_at=event.timestamp,
+        extra=extra,
+    )
+
+
+def _reconstruct_state(events: list[LogEvent]) -> _ObservedState:
+    state = _ObservedState()
+    alias_to_project: dict[str, str] = {}
+    active_by_alias: dict[tuple[str, int], RuntimeEndpoint] = {}
+    allocated_legacy: dict[int, int] = {}
+    stopped_legacy: set[int] = set()
+
+    for event in events:
+        if event.event_type == LogEventType.PROJECT_BOUND:
+            if event.topology_alias is None or event.project_id is None:
+                continue
+            alias = event.topology_alias
+            old_project = alias_to_project.get(alias)
+            if old_project != event.project_id:
+                # HCL reuses topo1/topo2.  Never carry endpoints across a
+                # reassignment, even if device IDs and ports happen to match.
+                for key in [key for key in active_by_alias if key[0] == alias]:
+                    active_by_alias.pop(key, None)
+            alias_to_project[alias] = event.project_id
+            continue
+
+        if event.event_type in (LogEventType.CONSOLE_CREATED, LogEventType.CONSOLE_CLOSED):
+            if event.topology_alias is None or event.device_id is None:
+                continue
+            alias = event.topology_alias
+            project_id = alias_to_project.get(alias)
+            if project_id is None:
+                # Without an explicit project binding, alias/device IDs are
+                # ambiguous and must not be exposed.
+                continue
+            key = (alias, event.device_id)
+            if event.event_type == LogEventType.CONSOLE_CREATED and event.console_port is not None:
+                active_by_alias[key] = _endpoint_from_event(event)
+                state.closed_devices.setdefault(project_id, set()).discard(event.device_id)
+            else:
+                active_by_alias.pop(key, None)
+                state.closed_devices.setdefault(project_id, set()).add(event.device_id)
+            continue
+
+        # Legacy synthetic state is intentionally unscoped for compatibility.
+        if event.device_id is None:
+            continue
+        if event.event_type == LogEventType.DEVICE_STARTED and event.console_port is not None:
+            state.legacy_endpoints[event.device_id] = _endpoint_from_event(event)
+            stopped_legacy.discard(event.device_id)
+        elif event.event_type == LogEventType.DEVICE_STOPPED:
+            state.legacy_endpoints.pop(event.device_id, None)
+            stopped_legacy.add(event.device_id)
+        elif event.event_type == LogEventType.CONSOLE_PORT_ALLOCATED and event.console_port is not None:
+            allocated_legacy[event.console_port] = event.device_id
+            stopped_legacy.discard(event.device_id)
+        elif event.event_type == LogEventType.CONSOLE_PORT_RELEASED and event.console_port is not None:
+            allocated_legacy.pop(event.console_port, None)
+            state.legacy_endpoints.pop(event.device_id, None)
+
+    # Materialize only aliases that still point at the same project.
+    for (alias, device_id), endpoint in active_by_alias.items():
+        project_id = alias_to_project.get(alias)
+        if project_id is not None:
+            state.project_endpoints.setdefault(project_id, {})[device_id] = endpoint
+
+    for port, device_id in allocated_legacy.items():
+        if device_id not in state.legacy_endpoints and device_id not in stopped_legacy:
+            state.legacy_endpoints[device_id] = RuntimeEndpoint(
+                transport=TransportType.CONSOLE_TELNET,
+                host="127.0.0.1",
+                port=port,
+                source=DiscoverySource.LOG,
+                confidence=0.85,
+                discovered_at=None,
+            )
+
+    return state
 
 
 def extract_endpoints_from_events(
     events: list[LogEvent],
     project_id: str | None = None,
 ) -> dict[int, list[RuntimeEndpoint]]:
-    """Extract RuntimeEndpoint entries from a list of parsed log events.
+    """Return current log-derived candidates after chronological reduction.
 
-    Builds a mapping from device_id to its discovered console endpoints.
-    Only the latest state for each device is returned.
-
-    Args:
-        events: Parsed log events (chronological order assumed).
-        project_id: Optional project ID for metadata (not used in v0.1).
-
-    Returns:
-        Dict mapping device_id to list of RuntimeEndpoint.
+    Real HCL endpoints are project-scoped.  The unscoped form remains for the
+    original synthetic fixtures and merges currently active real projects only
+    for backward compatibility.
     """
-    endpoints_by_device: dict[int, RuntimeEndpoint] = {}
-    stopped_devices: set[int] = set()
-    console_to_device: dict[int, int] = {}
+    state = _reconstruct_state(events)
+    if project_id is not None:
+        return {
+            device_id: [endpoint]
+            for device_id, endpoint in state.project_endpoints.get(project_id, {}).items()
+        }
 
-    for event in events:
-        if event.device_id is None:
-            continue
-
-        if event.event_type == LogEventType.DEVICE_STOPPED:
-            stopped_devices.add(event.device_id)
-
-        elif event.event_type == LogEventType.CONSOLE_PORT_ALLOCATED:
-            if event.console_port is not None:
-                console_to_device[event.console_port] = event.device_id
-
-        elif event.event_type == LogEventType.CONSOLE_PORT_RELEASED:
-            if event.console_port is not None:
-                console_to_device.pop(event.console_port, None)
-
-        elif event.event_type == LogEventType.DEVICE_STARTED and event.console_port is not None:
-            endpoint = RuntimeEndpoint(
-                transport=TransportType.CONSOLE_TELNET,
-                host="127.0.0.1",
-                port=event.console_port,
-                source=DiscoverySource.LOG,
-                confidence=0.9,
-                discovered_at=event.timestamp,
-            )
-            endpoints_by_device[event.device_id] = endpoint
-
-    # Also apply port allocations that weren't directly tied to a start event
-    for port, device_id in console_to_device.items():
-        if device_id not in endpoints_by_device:
-            endpoint = RuntimeEndpoint(
-                transport=TransportType.CONSOLE_TELNET,
-                host="127.0.0.1",
-                port=port,
-                source=DiscoverySource.LOG,
-                confidence=0.85,
-                discovered_at=datetime.now(tz=UTC),
-            )
-            endpoints_by_device[device_id] = endpoint
-
-    # Build result, excluding stopped devices
-    result: dict[int, list[RuntimeEndpoint]] = {}
-    for device_id, endpoint in endpoints_by_device.items():
-        if device_id not in stopped_devices:
-            result[device_id] = [endpoint]
-
-    return result
+    merged = dict(state.legacy_endpoints)
+    for endpoints in state.project_endpoints.values():
+        merged.update(endpoints)
+    return {device_id: [endpoint] for device_id, endpoint in merged.items()}
 
 
 class LogObserver:
-    """Observes HCL log output for device state changes.
-
-    v0.1: Parses lines provided directly (simulated log).
-    Future: Monitors HCL log files in real time using tail or file watchers.
-    """
+    """Chronologically reconstruct HCL project/console state from text logs."""
 
     def __init__(self) -> None:
         self._events: list[LogEvent] = []
-        self._endpoints: dict[int, list[RuntimeEndpoint]] = {}
+        self._state = _ObservedState()
 
     def feed_line(self, line: str) -> LogEvent:
-        """Feed a single log line to the observer."""
         event = parse_log_line(line)
         if event.event_type != LogEventType.UNKNOWN:
             self._events.append(event)
@@ -222,29 +326,68 @@ class LogObserver:
         return event
 
     def feed_lines(self, lines: list[str]) -> list[LogEvent]:
-        """Feed multiple log lines to the observer."""
         events = parse_log_lines(lines)
         self._events.extend(events)
         self._rebuild_state()
         return events
 
-    def _rebuild_state(self) -> None:
-        """Rebuild endpoint state from all accumulated events."""
-        self._endpoints = extract_endpoints_from_events(self._events)
+    def load_files(self, paths: list[str]) -> list[LogEvent]:
+        """Load rotated/current HCL log files and order events by timestamp.
 
-    def get_endpoint(self, device_id: int) -> RuntimeEndpoint | None:
-        """Get the discovered endpoint for a device."""
-        eps = self._endpoints.get(device_id, [])
-        return eps[0] if eps else None
+        File names and modification times are not reliable rotation order in
+        HCL 5.10.x, so timestamps embedded in recognized lines are authoritative.
+        Unreadable files are ignored and never create endpoints.
+        """
+        indexed_events: list[tuple[int, LogEvent]] = []
+        sequence = 0
+        for raw_path in paths:
+            try:
+                lines = Path(raw_path).read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for event in parse_log_lines(lines):
+                indexed_events.append((sequence, event))
+                sequence += 1
+
+        minimum = datetime.min.replace(tzinfo=UTC)
+        indexed_events.sort(key=lambda item: (item[1].timestamp or minimum, item[0]))
+        self._events = [event for _, event in indexed_events]
+        self._rebuild_state()
+        return list(self._events)
+
+    def _rebuild_state(self) -> None:
+        self._state = _reconstruct_state(self._events)
+
+    def get_endpoint(self, device_id: int, project_id: str | None = None) -> RuntimeEndpoint | None:
+        if project_id is not None:
+            return self.get_project_endpoint(project_id, device_id)
+        endpoint = self._state.legacy_endpoints.get(device_id)
+        if endpoint is not None:
+            return endpoint
+        for project_endpoints in self._state.project_endpoints.values():
+            endpoint = project_endpoints.get(device_id)
+            if endpoint is not None:
+                return endpoint
+        return None
+
+    def get_project_endpoint(self, project_id: str, device_id: int) -> RuntimeEndpoint | None:
+        return self._state.project_endpoints.get(project_id, {}).get(device_id)
+
+    def get_project_endpoints(self, project_id: str) -> dict[int, list[RuntimeEndpoint]]:
+        return {
+            device_id: [endpoint]
+            for device_id, endpoint in self._state.project_endpoints.get(project_id, {}).items()
+        }
+
+    def is_device_closed(self, project_id: str, device_id: int) -> bool:
+        return device_id in self._state.closed_devices.get(project_id, set())
 
     def get_all_endpoints(self) -> dict[int, list[RuntimeEndpoint]]:
-        """Get all discovered device endpoints."""
-        return dict(self._endpoints)
+        return extract_endpoints_from_events(self._events)
 
     def clear(self) -> None:
-        """Clear all accumulated events and state."""
         self._events.clear()
-        self._endpoints.clear()
+        self._state = _ObservedState()
 
     @property
     def event_count(self) -> int:

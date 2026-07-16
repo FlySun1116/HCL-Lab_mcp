@@ -15,8 +15,11 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from h3c_hcl_mcp.domain.command import CommandRequest, CommandTarget, CommandType
+from h3c_hcl_mcp.domain.device import TransportType
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.result import ToolResult
+from h3c_hcl_mcp.infrastructure.audit.redact import redact_sensitive
+from h3c_hcl_mcp.infrastructure.settings import DeviceSettings, ServerSettings
 from h3c_hcl_mcp.mcp.error_mapping import internal_error, map_domain_error
 from h3c_hcl_mcp.ports.command_parser import CommandParser
 from h3c_hcl_mcp.ports.device_transport import DeviceTransport
@@ -24,6 +27,18 @@ from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
 from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
 from h3c_hcl_mcp.ports.secret_provider import SecretProvider
+
+
+def _is_comware_candidate(model: str | None, category: str | None, version: str | None) -> bool:
+    """Exclude HCL terminal nodes from H3C/Comware tool results."""
+    normalized_model = (model or "").strip().casefold()
+    normalized_category = (category or "").strip().casefold()
+    normalized_version = (version or "").strip().casefold()
+    if "cmw" in normalized_version or "comware" in normalized_version:
+        return True
+    if normalized_model in {"pc", "host", "vpc"}:
+        return False
+    return normalized_category not in {"终端", "terminal", "host", "pc"}
 
 
 def register(mcp: FastMCP, **deps: Any) -> None:
@@ -39,6 +54,14 @@ def register(mcp: FastMCP, **deps: Any) -> None:
     parser: CommandParser = deps["command_parser"]
     policy: PolicyEngine = deps["policy_engine"]
     _secrets: SecretProvider = deps["secret_provider"]  # reserved for future use
+    server_settings: ServerSettings = deps["server_settings"]
+    device_settings: DeviceSettings = deps["device_settings"]
+    default_command_timeout = min(
+        device_settings.command_timeout_seconds,
+        server_settings.max_tool_seconds,
+        120,
+    )
+    preferred_transports = [TransportType(item) for item in device_settings.preferred_transports]
 
     async def _get_device_name(project_id: str, device_id: int) -> str:
         """Resolve a device name from the project topology."""
@@ -69,14 +92,14 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         project_id: str,
         device_id: int,
         command: str,
-        timeout: int = 20,
+        timeout: int | None = None,
     ) -> tuple[Any, str]:
         """Execute a display command on a device, handling common logic.
 
         Returns (command_result, device_name).
         """
         runtime = await _resolve_runtime_endpoint(project_id, device_id)
-        endpoint = runtime.best_endpoint()
+        endpoint = runtime.best_endpoint(preferred=preferred_transports)
         if endpoint is None:
             raise DomainError(
                 code=ErrorCode.CONSOLE_UNAVAILABLE,
@@ -89,31 +112,40 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             device_id=device_id,
             device_name=device_name,
         )
+        requested_timeout = timeout if timeout is not None else default_command_timeout
+        effective_timeout = min(requested_timeout, server_settings.max_tool_seconds, 120)
         request = CommandRequest(
             target=target,
             command=command,
             command_type=CommandType.DISPLAY,
-            timeout_seconds=float(timeout),
+            timeout_seconds=float(effective_timeout),
+            max_output_chars=server_settings.max_output_chars,
         )
 
         await policy.validate_command(request)
-        await transport.connect(endpoint)
         try:
+            await transport.connect(endpoint)
             result = await transport.execute(request)
         finally:
             await transport.close()
+
+        # Device output is untrusted and may include credentials even for a
+        # nominally read-only display command. Redaction is mandatory at the
+        # MCP boundary in v0.1.
+        result = result.model_copy(update={"raw_output": redact_sensitive(result.raw_output)})
 
         return result, device_name
 
     @mcp.tool(
         name="h3c_list_devices",
         description=(
-            "List operable H3C devices in an HCL project. "
-            "Returns devices that are running and have available console/SSH endpoints."
+            "List H3C/Comware candidate devices in an HCL project. "
+            "Includes stopped or unknown candidates and marks each device operable only "
+            "when a verified runtime endpoint is available."
         ),
     )
     async def h3c_list_devices(project_id: str) -> ToolResult:
-        """List operable H3C devices in a project.
+        """List H3C/Comware candidates and their current operability.
 
         Args:
             project_id: The HCL project identifier.
@@ -130,6 +162,12 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             operable_count = 0
 
             for device in topology.devices:
+                if not _is_comware_candidate(
+                    device.model,
+                    device.category,
+                    device.comware_version,
+                ):
+                    continue
                 rt = runtime_map.get(device.device_id)
                 is_operable = rt is not None and rt.is_running and len(rt.endpoints) > 0
                 if is_operable:
@@ -182,9 +220,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         start = time.monotonic()
 
         try:
-            cmd_result, device_name = await _execute_display(
-                project_id, device_id, "display version", timeout=20
-            )
+            cmd_result, device_name = await _execute_display(project_id, device_id, "display version")
             parsed = parser.parse(
                 cmd_result.raw_output,
                 model="unknown",
@@ -225,7 +261,9 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         project_id: str,
         device_id: int,
         command: str,
-        timeout: Annotated[int, Field(ge=1, le=120, description="Command timeout in seconds")] = 20,
+        timeout: Annotated[int, Field(ge=1, le=120, description="Command timeout in seconds")] = (
+            default_command_timeout
+        ),
     ) -> ToolResult:
         """Execute a read-only display command on an H3C device.
 
@@ -275,9 +313,8 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         name="h3c_get_config",
         description=(
             "Retrieve running or startup configuration from an H3C device. "
-            "Sensitive data (passwords, keys, SNMP communities) is redacted by default. "
-            "Use source='startup' for the saved configuration. "
-            "Use redact=False to disable automatic redaction (requires justification)."
+            "Sensitive data (passwords, keys, SNMP communities) is always redacted in v0.1. "
+            "Use source='startup' for the saved configuration."
         ),
     )
     async def h3c_get_config(
@@ -303,6 +340,11 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                     code=ErrorCode.INVALID_ARGUMENT,
                     message=f"Invalid config source: {source}. Use 'running' or 'startup'.",
                 )
+            if not redact:
+                raise DomainError(
+                    code=ErrorCode.POLICY_DENIED,
+                    message="Unredacted configuration retrieval is disabled in v0.1",
+                )
 
             command = (
                 "display current-configuration" if source == "running" else "display saved-configuration"
@@ -310,19 +352,6 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             cmd_result, device_name = await _execute_display(project_id, device_id, command, timeout=60)
 
             output = cmd_result.raw_output
-            if redact:
-                # Basic redaction patterns
-                import re
-
-                redactions = [
-                    (r"(password\s+)\S+", r"\1***"),
-                    (r"(cipher\s+)\S+", r"\1***"),
-                    (r"(simple\s+)\S+", r"\1***"),
-                    (r"(snmp-agent community\s+)\S+", r"\1***"),
-                    (r"(pre-shared-key\s+)\S+", r"\1***"),
-                ]
-                for pattern, replacement in redactions:
-                    output = re.sub(pattern, replacement, output, flags=re.IGNORECASE)
 
             duration_ms = (time.monotonic() - start) * 1000
             return ToolResult.success(

@@ -51,6 +51,10 @@ class TestServerSettings:
         with pytest.raises(ValidationError):
             ServerSettings(max_output_chars=100)  # below ge=256
 
+    def test_future_transports_are_rejected_in_v01(self) -> None:
+        with pytest.raises(ValidationError, match="only the stdio transport"):
+            ServerSettings(transport=TransportMode.STREAMABLE_HTTP)
+
     def test_rejects_unknown_fields(self) -> None:
         with pytest.raises(ValidationError):
             ServerSettings(unknown_field="value")
@@ -78,6 +82,28 @@ class TestHCLDiscoverySettings:
         s = HCLDiscoverySettings(projects_dirs=["/a", "/b"])
         assert s.projects_dirs == ["/a", "/b"]
 
+    def test_path_environment_references_are_expanded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("H3C_HCL_TEST_HOME", str(tmp_path))
+
+        settings = HCLSettings(
+            server={"config_dir": "${H3C_HCL_TEST_HOME}/config"},
+            hcl={
+                "projects_dirs": ["${H3C_HCL_TEST_HOME}/Projects"],
+                "install_dir": "${H3C_HCL_TEST_HOME}/HCL",
+            },
+            devices={"ssh": {"known_hosts": "${H3C_HCL_TEST_HOME}/known_hosts"}},
+            audit={"database": "${H3C_HCL_TEST_HOME}/audit.db"},
+        )
+
+        assert Path(settings.server.config_dir) == tmp_path / "config"
+        assert [Path(path) for path in settings.hcl.projects_dirs] == [tmp_path / "Projects"]
+        assert settings.hcl.install_dir is not None
+        assert Path(settings.hcl.install_dir) == tmp_path / "HCL"
+        assert Path(settings.devices.ssh.known_hosts) == tmp_path / "known_hosts"
+        assert Path(settings.audit.database) == tmp_path / "audit.db"
+
 
 class TestDeviceSettings:
     def test_defaults(self) -> None:
@@ -86,6 +112,12 @@ class TestDeviceSettings:
         assert s.connect_timeout_seconds == 5
         assert s.command_timeout_seconds == 20
         assert s.per_device_concurrency == 1
+
+    def test_rejects_unsupported_transport_or_concurrency(self) -> None:
+        with pytest.raises(ValidationError, match="preferred_transports"):
+            DeviceSettings(preferred_transports=["netconf"])
+        with pytest.raises(ValidationError, match="per_device_concurrency=1"):
+            DeviceSettings(per_device_concurrency=2)
 
     def test_ssh_defaults(self) -> None:
         s = DeviceSettings()
@@ -276,6 +308,17 @@ class TestEnvVarOverride:
         settings = load_settings(config_path=str(config))
         assert settings.hcl.install_dir == "/custom/hcl/path"
 
+    def test_environment_can_select_config_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = tmp_path / "selected.json"
+        config.write_text(json.dumps({"server": {"log_level": "WARNING"}}), encoding="utf-8")
+        monkeypatch.setenv("H3C_HCL_MCP_CONFIG", str(config))
+
+        settings = load_settings()
+
+        assert settings.server.log_level == "WARNING"
+
     def test_env_override_policy_mode(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Env var should override policy mode."""
         config = tmp_path / "config.yaml"
@@ -357,14 +400,17 @@ hcl:
 
 
 class TestNoConfigFile:
-    def test_no_config_file_exits(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When no config is provided and default paths are empty, should exit."""
+    def test_no_config_file_uses_safe_defaults(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A first run without config should use safe model defaults."""
         # Override default config dir to tmp_path (which has no config files)
         import h3c_hcl_mcp.infrastructure.settings as s_mod
 
         monkeypatch.setattr(s_mod, "_default_config_paths", lambda: [tmp_path / "config.yaml"])
-        with pytest.raises(SystemExit):
-            load_settings()
+        settings = load_settings()
+
+        assert settings.server.transport == TransportMode.STDIO
+        assert settings.policy.mode == PolicyMode.READ_ONLY
+        assert settings.hcl.projects_dirs == []
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +470,16 @@ class TestLoadFromEnv:
         monkeypatch.setenv("H3C_HCL_MCP__TIMEOUT", "2.5")
         result = _load_from_env()
         assert result["timeout"] == 2.5
+
+    def test_value_coercion_json_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(
+            "H3C_HCL_MCP__HCL__PROJECTS_DIRS",
+            json.dumps(["C:/HCL/Projects", "D:/Labs"]),
+        )
+
+        result = _load_from_env()
+
+        assert result["hcl"]["projects_dirs"] == ["C:/HCL/Projects", "D:/Labs"]
 
 
 # ---------------------------------------------------------------------------

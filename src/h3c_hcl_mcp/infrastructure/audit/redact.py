@@ -14,6 +14,16 @@ from re import Pattern
 # to avoid partial matches causing missed redactions.
 # ---------------------------------------------------------------------------
 REDACT_PATTERNS: list[tuple[Pattern[str], str]] = [
+    # Private keys must run before generic ``key`` rules, otherwise a secret
+    # line ending in "key" can consume and corrupt the PEM END marker.
+    (
+        re.compile(
+            r"-----BEGIN[ \t]+(?:[A-Z0-9]+[ \t]+)*PRIVATE[ \t]+KEY-----"
+            r".*?(?:-----END[ \t]+(?:[A-Z0-9]+[ \t]+)*PRIVATE[ \t]+KEY-----|\Z)",
+            re.DOTALL | re.IGNORECASE,
+        ),
+        "*** PRIVATE MATERIAL REDACTED ***",
+    ),
     # Passwords in various forms
     (re.compile(r"(?i)password\s+(?:simple|cipher|hash)?\s*\S+"), "password ***"),
     (re.compile(r"(?i)set\s+password\s+\S+"), "set password ***"),
@@ -38,19 +48,10 @@ REDACT_PATTERNS: list[tuple[Pattern[str], str]] = [
         re.compile(r"(?i)ntp-service\s+authentication-keyid\s+\d+\s+authentication-mode\s+\S+\s+\S+"),
         "ntp-service authentication-keyid ***",
     ),
-    # Private keys / certificates (PEM markers — remove entire block)
+    # SNMPv3 syntax varies between Comware releases. Redact the complete line
+    # rather than trying to identify only one positional secret.
     (
-        re.compile(
-            r"-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----",
-            re.DOTALL,
-        ),
-        "*** PRIVATE KEY REDACTED ***",
-    ),
-    # SNMPv3 auth/priv passwords
-    (
-        re.compile(
-            r"(?i)snmp-agent\s+usm-user\s+\S+\s+\S+\s+(?:authentication-mode|privacy-mode)\s+\S+\s+\S+"
-        ),
+        re.compile(r"(?im)^\s*snmp-agent\s+usm-user\b[^\r\n]*$"),
         "snmp-agent usm-user *** REDACTED ***",
     ),
     # SSH authorized keys

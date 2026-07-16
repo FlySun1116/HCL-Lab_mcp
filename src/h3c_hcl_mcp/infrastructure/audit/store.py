@@ -11,7 +11,7 @@ import json
 import logging
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,32 @@ from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
 
 logger = logging.getLogger(__name__)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Normalize aware or legacy naive timestamps for SQLite ordering."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+class NullAuditStore(AuditSink):
+    """No-op audit sink used only when auditing is explicitly disabled."""
+
+    async def append(self, event: AuditEvent) -> None:
+        del event
+
+    async def query(
+        self,
+        request_id: str | None = None,
+        tool: str | None = None,
+        target_device: int | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditEvent]:
+        del request_id, tool, target_device, since, until, limit
+        return []
 
 
 class SQLiteAuditStore(AuditSink):
@@ -71,6 +97,28 @@ class SQLiteAuditStore(AuditSink):
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA foreign_keys=ON;")
             conn.executescript(schema_sql)
+            # Databases created before the outcome field existed must remain
+            # readable. CREATE TABLE IF NOT EXISTS cannot add new columns.
+            columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(audit_events)")}
+            if "outcome" not in columns:
+                conn.execute("ALTER TABLE audit_events ADD COLUMN outcome TEXT NOT NULL DEFAULT 'success'")
+                conn.execute(
+                    "UPDATE audit_events SET outcome = 'error' "
+                    "WHERE error_code IS NOT NULL AND error_code != ''"
+                )
+
+            # SQLite compares ISO timestamps as TEXT. Normalize legacy rows
+            # to UTC so offsets such as +08:00 cannot break filtering/order.
+            for row in conn.execute("SELECT event_id, timestamp FROM audit_events"):
+                try:
+                    normalized = _as_utc(datetime.fromisoformat(str(row[1]))).isoformat()
+                except (TypeError, ValueError):
+                    continue
+                if normalized != row[1]:
+                    conn.execute(
+                        "UPDATE audit_events SET timestamp = ? WHERE event_id = ?",
+                        (normalized, row[0]),
+                    )
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a new SQLite connection."""
@@ -92,7 +140,7 @@ class SQLiteAuditStore(AuditSink):
     def _append_sync(self, event: AuditEvent) -> None:
         """Synchronous insert under lock."""
         target_json = json.dumps(event.target, ensure_ascii=False) if event.target else None
-        timestamp_iso = event.timestamp.isoformat()
+        timestamp_iso = _as_utc(event.timestamp).isoformat()
 
         with self._lock:
             try:
@@ -100,9 +148,9 @@ class SQLiteAuditStore(AuditSink):
                     conn.execute(
                         """INSERT INTO audit_events
                            (event_id, request_id, caller, tool, target,
-                            policy_result, change_summary, timestamp,
+                            policy_result, outcome, change_summary, timestamp,
                             duration_ms, error_code)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             event.event_id,
                             event.request_id,
@@ -110,6 +158,7 @@ class SQLiteAuditStore(AuditSink):
                             event.tool,
                             target_json,
                             event.policy_result,
+                            event.outcome,
                             event.change_summary,
                             timestamp_iso,
                             event.duration_ms,
@@ -175,10 +224,10 @@ class SQLiteAuditStore(AuditSink):
             params.append(target_device)
         if since:
             where_clauses.append("timestamp >= ?")
-            params.append(since.isoformat())
+            params.append(_as_utc(since).isoformat())
         if until:
             where_clauses.append("timestamp <= ?")
-            params.append(until.isoformat())
+            params.append(_as_utc(until).isoformat())
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
         query_sql = f"SELECT * FROM audit_events WHERE {where_sql} ORDER BY timestamp DESC LIMIT ?"
@@ -203,7 +252,7 @@ class SQLiteAuditStore(AuditSink):
                 except json.JSONDecodeError:
                     target_dict = {"raw": row["target"]}
 
-            timestamp = datetime.fromisoformat(row["timestamp"])
+            timestamp = _as_utc(datetime.fromisoformat(row["timestamp"]))
 
             events.append(
                 AuditEvent(
@@ -213,6 +262,7 @@ class SQLiteAuditStore(AuditSink):
                     tool=row["tool"],
                     target=target_dict,
                     policy_result=row["policy_result"],
+                    outcome=row["outcome"],
                     change_summary=row["change_summary"],
                     timestamp=timestamp,
                     duration_ms=row["duration_ms"],
