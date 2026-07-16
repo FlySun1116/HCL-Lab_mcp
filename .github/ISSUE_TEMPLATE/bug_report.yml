@@ -1,0 +1,82 @@
+name: Bug report
+description: Report a reproducible HCL-Lab MCP defect without including secrets or vendor assets.
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve HCL-Lab MCP. Remove project names, local paths,
+        device configurations, credentials, private keys, and raw HCL logs before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: HCL-Lab MCP version or commit
+      placeholder: 0.1.0-beta.2 / git SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows, Python, HCL, and MCP Client versions.
+      placeholder: Windows 11, Python 3.12.x, HCL 5.10.3, Claude Desktop/Cursor version
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Installation or packaging
+        - MCP protocol or Tool schema
+        - HCL project parsing
+        - Runtime or console discovery
+        - Comware command execution or parsing
+        - Policy, redaction, or audit
+        - Documentation or CI
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic identifiers and include the smallest safe example.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include stable error code/request ID when available; redact all device output.
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Suggested severity
+      options:
+        - P0 - security, data loss, or release blocker
+        - P1 - core function unavailable or unsafe
+        - P2 - degraded function or important usability issue
+        - P3 - minor issue
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checklist
+      options:
+        - label: I removed credentials, tokens, private keys, real configurations, identifiable topology data, and raw HCL logs.
+          required: true
+        - label: I did not attach HCL executables, DLLs, device images, vendor documentation, or other proprietary assets.
+          required: true
+        - label: Reproduction does not require configuration writes, save, reboot, reset, delete, format, or private HCL control APIs.
+          required: true

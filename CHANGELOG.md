@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a final `CallToolResult` UTF-8 byte budget and stable `OUTPUT_TOO_LARGE` failures across
   success, validation, timeout, unknown-tool, and error response paths.
 - Added an explicit active-v0.1 line-coverage definition and an 85% CI gate.
+- Added structured Bug, Feature, and Agent Task Issue forms plus a release-oriented PR checklist so a new Agent Team can receive bounded ownership and verification requirements directly from GitHub.
 
 ### Fixed
 

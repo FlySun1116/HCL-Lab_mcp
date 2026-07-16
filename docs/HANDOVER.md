@@ -64,6 +64,11 @@
 - project list cursor 已接入 repository 分页；恶意超长 Tool/project 标识在进入审计前受限。
 - 进程检查、日志加载移出事件循环；日志观察限制为最多 16 个文件、每文件最多 4 MiB，并显式关闭 SQLite、scandir 和测试 Telnet writer。
 
+### GitHub 与 Agent 接管
+
+- `.github/ISSUE_TEMPLATE/` 提供 Bug、Feature 和 Agent Task 表单；Agent Task 强制记录 owned/forbidden files、依赖、验收证据和交接对象。
+- PR 模板固定架构影响、完整门禁、Secret/专有资产、安全策略、真实设备只读与外部发布动作检查项。
+
 ## 修改文件
 
 beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
@@ -77,6 +82,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 - `src/h3c_hcl_mcp/mcp/`
 - `tests/contract/`、`tests/unit/`、`tests/integration/`、脱敏 fixtures
 - `README.md`、`CHANGELOG.md`、`docs/`、`config/`、`examples/`
+- `.github/ISSUE_TEMPLATE/`、`.github/pull_request_template.md`、`.github/workflows/ci.yml`
 - `pyproject.toml`、`uv.lock`、版本模块
 
 ## 关键决策/ADR
