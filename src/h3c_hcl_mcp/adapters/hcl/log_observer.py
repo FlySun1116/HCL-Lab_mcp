@@ -15,6 +15,10 @@ from pathlib import Path
 
 from h3c_hcl_mcp.domain.device import DiscoverySource, RuntimeEndpoint, TransportType
 
+_DEFAULT_MAX_LOG_FILES = 16
+_DEFAULT_MAX_LOG_BYTES_PER_FILE = 4 * 1024 * 1024
+_LOG_HEAD_BYTES = 64 * 1024
+
 
 class LogEventType(StrEnum):
     """Types of events extractable from HCL logs."""
@@ -311,6 +315,30 @@ def extract_endpoints_from_events(
     return {device_id: [endpoint] for device_id, endpoint in merged.items()}
 
 
+def _read_bounded_log_lines(path: Path, max_bytes: int) -> list[str]:
+    """Read a bounded head/tail snapshot without retaining partial lines."""
+    with path.open("rb") as log_file:
+        size = log_file.seek(0, 2)
+        log_file.seek(0)
+        if size <= max_bytes:
+            payload = log_file.read(max_bytes)
+        else:
+            head_budget = min(_LOG_HEAD_BYTES, max_bytes // 4)
+            tail_budget = max_bytes - head_budget
+
+            head = log_file.read(head_budget)
+            last_head_newline = max(head.rfind(b"\n"), head.rfind(b"\r"))
+            head = head[: last_head_newline + 1] if last_head_newline >= 0 else b""
+
+            log_file.seek(size - tail_budget)
+            tail = log_file.read(tail_budget)
+            first_tail_newline = tail.find(b"\n")
+            tail = tail[first_tail_newline + 1 :] if first_tail_newline >= 0 else b""
+            payload = head + tail
+
+    return payload.decode("utf-8", errors="replace").splitlines()
+
+
 class LogObserver:
     """Chronologically reconstruct HCL project/console state from text logs."""
 
@@ -331,18 +359,38 @@ class LogObserver:
         self._rebuild_state()
         return events
 
-    def load_files(self, paths: list[str]) -> list[LogEvent]:
+    def load_files(
+        self,
+        paths: list[str],
+        *,
+        max_files: int = _DEFAULT_MAX_LOG_FILES,
+        max_bytes_per_file: int = _DEFAULT_MAX_LOG_BYTES_PER_FILE,
+    ) -> list[LogEvent]:
         """Load rotated/current HCL log files and order events by timestamp.
 
         File names and modification times are not reliable rotation order in
         HCL 5.10.x, so timestamps embedded in recognized lines are authoritative.
-        Unreadable files are ignored and never create endpoints.
+        Unreadable files are ignored and never create endpoints. Resource use
+        is bounded by reading at most ``max_files`` and a head/tail window from
+        each file; the head preserves initial project binding while the tail
+        captures the current console state.
         """
         indexed_events: list[tuple[int, LogEvent]] = []
         sequence = 0
-        for raw_path in paths:
+        candidates: list[tuple[int, int, Path]] = []
+        for index, raw_path in enumerate(paths):
+            path = Path(raw_path)
             try:
-                lines = Path(raw_path).read_text(encoding="utf-8", errors="replace").splitlines()
+                stat = path.stat()
+            except OSError:
+                continue
+            if path.is_file():
+                candidates.append((stat.st_mtime_ns, index, path))
+
+        selected = sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True)[: max(1, max_files)]
+        for _, _, path in selected:
+            try:
+                lines = _read_bounded_log_lines(path, max(256, max_bytes_per_file))
             except OSError:
                 continue
             for event in parse_log_lines(lines):

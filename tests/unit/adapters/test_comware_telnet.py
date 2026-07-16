@@ -80,6 +80,7 @@ class FakeComwareTelnetServer:
         self.disconnect_after = disconnect_after  # disconnect after N commands
 
         self._server: asyncio.AbstractServer | None = None
+        self._client_writers: set[asyncio.StreamWriter] = set()
         self._command_count = 0
         self._command_handlers: dict[str, str] = {}
         self._paginated_output: dict[str, list[str]] = {}
@@ -113,9 +114,16 @@ class FakeComwareTelnetServer:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
+        writers = list(self._client_writers)
+        for writer in writers:
+            writer.close()
+        if writers:
+            await asyncio.gather(*(writer.wait_closed() for writer in writers), return_exceptions=True)
+        self._client_writers.clear()
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Handle a single client connection."""
+        self._client_writers.add(writer)
         self._command_count = 0
 
         if self.startup_delay > 0:
@@ -164,6 +172,10 @@ class FakeComwareTelnetServer:
             writer.write(response.encode("ascii"))
             writer.write(f"\r\n{self.prompt}".encode("ascii"))
             await writer.drain()
+
+        writer.close()
+        await asyncio.gather(writer.wait_closed(), return_exceptions=True)
+        self._client_writers.discard(writer)
 
     def _build_paginated(self, pages: list[str]) -> str:
         """Build paginated response with ---- More ---- markers between pages."""
@@ -339,6 +351,48 @@ class TestConsoleTelnetTransport:
 
         assert "FIRST DEVICE" in first_output
         assert "SECOND DEVICE" in second_output
+
+    async def test_session_manager_serializes_one_hundred_same_device_commands(self):
+        server = FakeComwareTelnetServer(prompt="<SERIAL>")
+        command_count = 100
+        for index in range(command_count):
+            server.register_command(f"display test {index}", f"@@RESULT-{index:03d}@@")
+        await server.start()
+        manager = DeviceSessionManager(connect_timeout_seconds=2)
+        transport = SessionManagerTransport(manager)
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=server.actual_port,
+            source=DiscoverySource.PROBE,
+            confidence=1.0,
+            extra={"project_id": "lab", "device_id": "1"},
+        )
+
+        async def execute(index: int) -> str:
+            request = CommandRequest(
+                target=CommandTarget(project_id="lab", device_id=1),
+                command=f"display test {index}",
+            )
+            await transport.connect(endpoint)
+            await asyncio.sleep(0)
+            try:
+                result = await transport.execute(request)
+                return result.raw_output
+            finally:
+                await transport.close()
+
+        try:
+            outputs = await asyncio.gather(*(execute(index) for index in range(command_count)))
+        finally:
+            await manager.close_all()
+            await server.stop()
+
+        for index, output in enumerate(outputs):
+            assert f"@@RESULT-{index:03d}@@" in output
+            assert all(
+                f"@@RESULT-{other:03d}@@" not in output for other in range(command_count) if other != index
+            )
 
     async def test_connect_refused(self, transport):
         """Connect to a closed port should raise CONNECTION_FAILED."""
@@ -644,6 +698,7 @@ class TestFakeTelnetServer:
             assert b"<H3C>" in data
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_echoes_command(self, server):
         reader, writer = await asyncio.open_connection("127.0.0.1", server.actual_port)
@@ -655,6 +710,7 @@ class TestFakeTelnetServer:
             assert b"display version" in data
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_registered_command_response(self, server):
         server.register_command("display version", "H3C Comware Software, Version 7.1.070")
@@ -668,6 +724,7 @@ class TestFakeTelnetServer:
             assert b"<H3C>" in data  # trailing prompt
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_unknown_command(self, server):
         reader, writer = await asyncio.open_connection("127.0.0.1", server.actual_port)
@@ -679,6 +736,7 @@ class TestFakeTelnetServer:
             assert b"Unknown command" in data
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_pagination(self, server):
         pages = [
@@ -698,3 +756,4 @@ class TestFakeTelnetServer:
             assert b"line 3" in data
         finally:
             writer.close()
+            await writer.wait_closed()

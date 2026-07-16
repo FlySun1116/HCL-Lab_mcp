@@ -9,17 +9,24 @@ import pytest
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
+from h3c_hcl_mcp.domain.command import CommandRequest, CommandTarget, CommandType
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
+from h3c_hcl_mcp.infrastructure.policy.engine import PolicyEngineImpl
 from h3c_hcl_mcp.infrastructure.settings import AuditSettings, HCLSettings
 from h3c_hcl_mcp.mcp.error_mapping import map_domain_error
 from h3c_hcl_mcp.mcp.server import create_server
-from h3c_hcl_mcp.mcp.tools.h3c_read import _is_comware_candidate
+from h3c_hcl_mcp.mcp.tools.h3c_read import (
+    _classify_read_only_command,
+    _is_comware_candidate,
+    _public_parsed_data,
+)
 from h3c_hcl_mcp.version import VERSION
 
 
 @pytest.fixture
-def server() -> FastMCP:
-    return create_server()
+def server(tmp_path) -> FastMCP:
+    settings = HCLSettings(audit=AuditSettings(database=str(tmp_path / "audit.db")))
+    return create_server(settings=settings)
 
 
 def _call(server, tool_name, args=None):
@@ -61,6 +68,27 @@ class TestHCLProjects:
 
         assert data["data"]["projects"]
         assert all("path" not in project for project in data["data"]["projects"])
+
+    def test_list_cursor_can_be_passed_back_for_next_page(self, synthetic_projects_dir):
+        server = create_server(hcl_projects_dirs=[str(synthetic_projects_dir)])
+
+        _, first = _call(server, "hcl_list_projects", {"limit": 1})
+        next_cursor = first["data"]["next_cursor"]
+        _, second = _call(
+            server,
+            "hcl_list_projects",
+            {"limit": 1, "cursor": next_cursor},
+        )
+
+        assert first["data"]["projects"][0]["project_id"] != second["data"]["projects"][0]["project_id"]
+
+    def test_list_schema_exposes_bounded_cursor(self, server):
+        tools = asyncio.run(server.list_tools())
+        tool = next(item for item in tools if item.name == "hcl_list_projects")
+
+        cursor = tool.inputSchema["properties"]["cursor"]
+        assert cursor["pattern"] == "^[0-9]*$"
+        assert cursor["maxLength"] == 20
 
     def test_topology_not_found(self, server):
         with pytest.raises(ToolError) as exc:
@@ -111,6 +139,32 @@ class TestH3CDevices:
     def test_comware_candidate_filter(self, model, category, version, expected):
         assert _is_comware_candidate(model, category, version) is expected
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        ["ping -c 5 192.0.2.1", "tracert -m 30 192.0.2.1"],
+    )
+    async def test_diagnostic_tools_use_diagnostic_policy_category(self, command: str) -> None:
+        command_type = _classify_read_only_command(command)
+        request = CommandRequest(
+            target=CommandTarget(project_id="test", device_id=1),
+            command=command,
+            command_type=command_type,
+        )
+
+        assert command_type == CommandType.DIAGNOSTIC
+        assert await PolicyEngineImpl(HCLSettings().policy).validate_command(request)
+
+    def test_parser_raw_output_is_not_duplicated_in_public_structured_data(self) -> None:
+        parsed = _public_parsed_data(
+            {
+                "destination": "192.0.2.1",
+                "raw": "raw device output",
+                "_raw": "raw device output",
+            }
+        )
+        assert parsed == {"destination": "192.0.2.1"}
+
     def test_list_not_found(self, server):
         with pytest.raises(ToolError) as exc:
             _call(server, "h3c_list_devices", {"project_id": "nonexistent"})
@@ -133,6 +187,7 @@ class TestH3CDevices:
 
         error_data = _get_tool_error_json(exc.value)
         assert error_data["error"]["code"] == "DEVICE_NOT_RUNNING"
+        assert "start the target device" in error_data["error"]["next_action"]
 
     def test_unredacted_config_is_policy_denied(self, server):
         with pytest.raises(ToolError) as exc:
@@ -256,6 +311,17 @@ class TestToolCount:
         timeout_schema = run_display.inputSchema["properties"]["timeout"]
         assert timeout_schema["default"] == 120
         assert timeout_schema["default"] <= timeout_schema["maximum"]
+
+    @pytest.mark.parametrize("tool_name", ["h3c_ping", "h3c_trace_route"])
+    def test_diagnostic_destination_schema_rejects_cli_arguments(self, tool_name: str):
+        server = create_server()
+        tools = asyncio.run(server.list_tools())
+        tool = next(candidate for candidate in tools if candidate.name == tool_name)
+        destination = tool.inputSchema["properties"]["destination"]
+
+        assert destination["minLength"] == 1
+        assert destination["maxLength"] == 253
+        assert destination["pattern"]
 
 
 class TestErrorBoundary:

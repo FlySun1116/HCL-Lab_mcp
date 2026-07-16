@@ -4,7 +4,8 @@
     "transport": "stdio",
     "log_level": "INFO",
     "max_tool_seconds": 60,
-    "max_output_chars": 32768
+    "max_output_chars": 32768,
+    "max_tool_result_bytes": 262144
   },
   "hcl": {
     "projects_dirs": [

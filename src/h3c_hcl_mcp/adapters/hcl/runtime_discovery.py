@@ -356,7 +356,9 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
         now = time.monotonic()
         if self._hcl_running_cache is not None and now - self._hcl_running_cache_time < 10.0:
             return self._hcl_running_cache
-        self._hcl_running_cache = _is_hcl_running()
+        # tasklist/ps can block for several seconds on a busy Windows host.
+        # Keep the stdio event loop responsive while inspecting processes.
+        self._hcl_running_cache = await asyncio.to_thread(_is_hcl_running)
         self._hcl_running_cache_time = now
         return self._hcl_running_cache
 
@@ -402,7 +404,9 @@ class HCLRuntimeDiscovery(RuntimeDiscovery):
 
     async def _discover_uncached(self, project_id: str) -> list[DeviceRuntime]:
         hcl_running = await self._check_hcl_running()
-        observer = self._load_log_observer() if hcl_running else LogObserver()
+        # Log discovery reads and parses multiple rotated files. It is
+        # ordinary blocking filesystem I/O and must not freeze other MCP calls.
+        observer = await asyncio.to_thread(self._load_log_observer) if hcl_running else LogObserver()
         candidates = observer.get_project_endpoints(project_id)
         probe_count = 0
         results: list[DeviceRuntime] = []

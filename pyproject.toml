@@ -32,6 +32,7 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6,<8",
     "pytest-mock>=3.14",
     "ruff>=0.9",
     "mypy>=1.14",
@@ -75,6 +76,22 @@ python_version = "3.12"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["h3c_hcl_mcp"]
+omit = [
+    "*/adapters/comware/capabilities.py",
+    "*/adapters/comware/netconf.py",
+    "*/adapters/comware/ssh.py",
+    "*/infrastructure/policy/approvals.py",
+    "*/infrastructure/secrets.py",
+    "*/mcp/tools/h3c_change.py",
+]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
 
 [dependency-groups]
 dev = [

@@ -14,7 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added bounded loopback Telnet/Comware prompt verification before a console endpoint can be reported as usable.
 - Added `ProjectAwareRuntimeDiscovery` so project topology is registered before both project-wide and single-device discovery.
 - Added official MCP `ClientSession` stdio subprocess tests for no-config startup, `initialize`, `tools/list`, `tools/call`, validation, configuration sources, and pre-protocol configuration failures.
-- Added Python 3.12 clean-wheel stdio test support through `H3C_HCL_MCP_TEST_PYTHON`.
+- Added Python 3.12 clean-artifact stdio tests through `H3C_HCL_MCP_TEST_EXECUTABLE`; the
+  installed console entry point is exercised outside the source tree for both wheel and sdist.
+- Added structured Comware ping and traceroute parsers with strict destination/count/hop schemas.
+- Added a final `CallToolResult` UTF-8 byte budget and stable `OUTPUT_TOO_LARGE` failures across
+  success, validation, timeout, unknown-tool, and error response paths.
+- Added an explicit active-v0.1 line-coverage definition and an 85% CI gate.
 
 ### Fixed
 
@@ -39,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closed and invalidated Telnet sessions after prompt failure, EOF, cancellation, truncation, or command timeout so late bytes cannot contaminate a later request.
 - Moved project scanning/topology parsing off the stdio event loop and reconciled deleted topology devices from cached runtime state.
 - Made deep health checks inspect configured projects and real runtime discovery instead of reporting an unconditional dependency result.
+- Moved process inspection and bounded log loading off the stdio event loop, closed SQLite/scandir/Telnet resources explicitly, and limited log observation to 16 files and 4 MiB per file.
+- Classified `ping` and `tracert` as diagnostic operations and parsed their summaries instead of returning ambiguous raw-only data.
+- Redacted SNMP communities, NTP authentication keys, RADIUS/HWTACACS shared keys, and all supported `super password` role/hash/cipher/simple forms in both full and quick paths.
+- Passed `hcl_list_projects` cursors through to the repository so pagination can advance beyond the first page.
+- Marked device-derived result content as untrusted and removed duplicate raw parser copies from structured results.
 
 ### Changed
 
@@ -48,8 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verification status
 
-- Frozen-candidate gates pass: Ruff check/format, mypy over 68 source files, and **489 pytest tests** on Python 3.14.5.
-- `uv build` produces `0.1.0b2` wheel/sdist; the wheel contains the audit schema and passes all **7 official stdio tests** from a clean Python 3.12.13 environment.
+- Frozen-candidate gates pass: Ruff check/format over 101 files, mypy over 69 source files, and **628 pytest tests** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **86.83%** (3,646 statements, 480 missed), above the 85% hard gate.
+- `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
+- The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
 - Synthetic parser, fake console, MCP protocol, validation, audit, configuration, redaction, timeout, and concurrency paths are automated.
 - A local HCL 5.10.3 project was parsed read-only, but the target project/devices were not running during the latest runtime check. Successful real-device `display version` and `display ip interface brief` remain release-candidate exit checks.
 - No tag, GitHub Release, or PyPI publication has been created for this candidate.

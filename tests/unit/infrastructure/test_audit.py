@@ -5,12 +5,30 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+from contextlib import closing
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from h3c_hcl_mcp.domain.audit import AuditEvent
 from h3c_hcl_mcp.infrastructure.audit.store import SQLiteAuditStore
+
+
+class _TrackingConnection:
+    """Transparent SQLite proxy that records whether close() was called."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self.closed = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+    def close(self) -> None:
+        self.closed = True
+        self._connection.close()
 
 
 @pytest.fixture
@@ -62,6 +80,29 @@ def _make_event(
         duration_ms=duration_ms,
         error_code=error_code,
     )
+
+
+@pytest.mark.asyncio
+async def test_closes_every_short_lived_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Initialization, append, and query must not leak SQLite handles."""
+    original_get_connection = SQLiteAuditStore._get_connection
+    connections: list[_TrackingConnection] = []
+
+    def tracked_get_connection(store: SQLiteAuditStore) -> Any:
+        connection = _TrackingConnection(original_get_connection(store))
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(SQLiteAuditStore, "_get_connection", tracked_get_connection)
+    store = SQLiteAuditStore(db_path=str(tmp_path / "audit.db"))
+    await store.append(_make_event())
+    await store.query(limit=1)
+
+    assert len(connections) == 3
+    assert all(connection.closed for connection in connections)
 
 
 class TestAppendAndQuery:
@@ -210,7 +251,7 @@ class TestSchemaMigration:
     @pytest.mark.asyncio
     async def test_adds_outcome_to_existing_database(self, tmp_path) -> None:
         db_path = tmp_path / "old-audit.db"
-        with sqlite3.connect(db_path) as connection:
+        with closing(sqlite3.connect(db_path)) as connection:
             connection.execute(
                 """CREATE TABLE audit_events (
                     event_id TEXT PRIMARY KEY,
@@ -243,6 +284,7 @@ class TestSchemaMigration:
                     "DEVICE_NOT_RUNNING",
                 ),
             )
+            connection.commit()
 
         store = SQLiteAuditStore(db_path=str(db_path))
         await store.append(_make_event(event_id="evt-migrated"))

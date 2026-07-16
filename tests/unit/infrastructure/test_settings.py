@@ -36,6 +36,7 @@ class TestServerSettings:
         assert s.log_level == "INFO"
         assert s.max_tool_seconds == 60
         assert s.max_output_chars == 32768
+        assert s.max_tool_result_bytes == 262144
 
     def test_custom_values(self) -> None:
         s = ServerSettings(name="custom", log_level="DEBUG", max_tool_seconds=120)
@@ -50,6 +51,8 @@ class TestServerSettings:
             ServerSettings(max_tool_seconds=9999)  # above le=600
         with pytest.raises(ValidationError):
             ServerSettings(max_output_chars=100)  # below ge=256
+        with pytest.raises(ValidationError):
+            ServerSettings(max_tool_result_bytes=1023)  # below ge=1024
 
     def test_future_transports_are_rejected_in_v01(self) -> None:
         with pytest.raises(ValidationError, match="only the stdio transport"):

@@ -242,4 +242,28 @@ def _validate_diagnostic_args(command: str) -> str | None:
         if pattern.search(lowered):
             return reason
 
+    safe_destination = r"[A-Za-z0-9:.][A-Za-z0-9._:-]{0,252}"
+    if lowered.startswith("ping"):
+        match = re.fullmatch(
+            rf"ping(?:\s+-c\s+([0-9]+))?\s+({safe_destination})",
+            command.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return "ping accepts only an optional '-c 1..100' and one safe destination"
+        count = int(match.group(1)) if match.group(1) is not None else 5
+        if not 1 <= count <= 100:
+            return "ping count must be between 1 and 100"
+    elif lowered.startswith("tracert"):
+        match = re.fullmatch(
+            rf"tracert(?:\s+-m\s+([0-9]+))?\s+({safe_destination})",
+            command.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return "tracert accepts only an optional '-m 1..255' and one safe destination"
+        max_hops = int(match.group(1)) if match.group(1) is not None else 30
+        if not 1 <= max_hops <= 255:
+            return "tracert max hops must be between 1 and 255"
+
     return None

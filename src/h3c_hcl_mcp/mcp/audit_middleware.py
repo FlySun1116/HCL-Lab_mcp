@@ -23,6 +23,8 @@ from h3c_hcl_mcp.ports.audit_sink import AuditSink
 
 logger = logging.getLogger(__name__)
 
+_MAX_AUDIT_IDENTIFIER_CHARS = 256
+
 _POLICY_ERROR_CODES = {
     "APPROVAL_EXPIRED",
     "APPROVAL_INVALID",
@@ -128,11 +130,23 @@ def _extract_target(kwargs: dict[str, Any]) -> dict[str, object] | None:
     project_id = kwargs.get("project_id")
     device_id = kwargs.get("device_id")
     if project_id is not None:
-        target: dict[str, object] = {"project_id": str(project_id)}
+        target: dict[str, object] = {"project_id": _bounded_audit_text(project_id)}
         if device_id is not None:
-            target["device_id"] = int(str(device_id))
+            try:
+                target["device_id"] = int(str(device_id))
+            except (TypeError, ValueError):
+                target["device_id"] = _bounded_audit_text(device_id)
         return target
     return None
+
+
+def _bounded_audit_text(value: object) -> str:
+    """Keep client-controlled audit identifiers from growing without bound."""
+
+    text = str(value)
+    if len(text) <= _MAX_AUDIT_IDENTIFIER_CHARS:
+        return text
+    return text[: _MAX_AUDIT_IDENTIFIER_CHARS - 1] + "…"
 
 
 def _extract_result_request_id(result: Any) -> str | None:

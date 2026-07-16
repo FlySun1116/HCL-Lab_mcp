@@ -208,9 +208,10 @@ def _find_net_file(project_dir: str) -> str | None:
     _validate_project_path(project_dir)
 
     try:
-        for entry in os.scandir(project_dir):
-            if entry.is_file() and entry.name.endswith(".net"):
-                return entry.path
+        with os.scandir(project_dir) as entries:
+            for entry in entries:
+                if entry.is_file() and entry.name.endswith(".net"):
+                    return entry.path
     except OSError:
         pass
 
@@ -296,17 +297,18 @@ class HCLProjectRepository(ProjectRepository):
                 continue
 
             try:
-                for entry in os.scandir(projects_dir):
-                    if not entry.is_dir():
-                        continue
+                with os.scandir(projects_dir) as entries:
+                    for entry in entries:
+                        if not entry.is_dir():
+                            continue
 
-                    try:
-                        project = self._get_project_sync(entry.name)
-                        all_projects.append(project)
-                    except DomainError as e:
-                        # Collect skipped project info for diagnostics
-                        logger.debug("Skipping %s: %s", entry.name, e.message)
-                        continue
+                        try:
+                            project = self._get_project_sync(entry.name)
+                            all_projects.append(project)
+                        except DomainError as e:
+                            # Collect skipped project info for diagnostics
+                            logger.debug("Skipping %s: %s", entry.name, e.message)
+                            continue
             except OSError:
                 continue
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from h3c_hcl_mcp.domain.errors import DomainError
 from h3c_hcl_mcp.domain.result import ToolResult
@@ -27,18 +28,28 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         name="hcl_list_projects",
         description=(
             "List HCL lab projects discovered on this machine. "
-            "Returns project summaries including name, device count, and last modified time."
+            "Returns project summaries including name, device count, and last modified time. "
+            "Pass next_cursor back as cursor to continue pagination."
         ),
     )
     async def hcl_list_projects(
-        query: str = "",
-        limit: int = 50,
+        query: Annotated[str, Field(max_length=256, description="Optional name or ID filter")] = "",
+        limit: Annotated[int, Field(ge=1, le=200, description="Maximum projects per page")] = 50,
+        cursor: Annotated[
+            str,
+            Field(
+                max_length=20,
+                pattern=r"^[0-9]*$",
+                description="Opaque cursor returned by the previous page",
+            ),
+        ] = "",
     ) -> ToolResult:
         """List HCL lab projects with optional query filtering.
 
         Args:
             query: Optional filter string to match against project names.
             limit: Maximum number of projects to return (1-200).
+            cursor: Cursor returned in the previous page's next_cursor field.
         """
         request_id = str(uuid.uuid4())
         start = time.monotonic()
@@ -46,7 +57,8 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         try:
             projects, next_cursor = await project_repo.list_projects(
                 query=query if query else None,
-                limit=max(1, min(limit, 200)),
+                limit=limit,
+                cursor=cursor if cursor else None,
             )
 
             # The repository needs absolute paths internally, but MCP clients

@@ -7,7 +7,8 @@ server:
   transport: stdio              # v0.1 accepts stdio only
   log_level: INFO
   max_tool_seconds: 60
-  max_output_chars: 32768
+  max_output_chars: 32768       # Device console capture limit (characters)
+  max_tool_result_bytes: 262144 # Final MCP CallToolResult limit (UTF-8 bytes)
 
 # HCL discovery settings
 hcl:

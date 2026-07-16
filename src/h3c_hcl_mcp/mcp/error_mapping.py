@@ -33,6 +33,24 @@ _PATH_SAFE_MESSAGES = {
     ErrorCode.PROJECT_DAMAGED: "HCL project data is damaged or unreadable",
     ErrorCode.PROJECT_PATH_TRAVERSAL: "HCL project path is not allowed",
 }
+_NEXT_ACTIONS = {
+    ErrorCode.HCL_NOT_INSTALLED: (
+        "Install HCL 5.10.x separately, or configure hcl.install_dir to an existing installation."
+    ),
+    ErrorCode.PROJECT_NOT_FOUND: (
+        "Configure hcl.projects_dirs with the parent directory of the HCL project, then retry."
+    ),
+    ErrorCode.DEVICE_NOT_RUNNING: (
+        "Open the project in HCL, start the target device, wait for its console, then retry."
+    ),
+    ErrorCode.CONSOLE_UNAVAILABLE: (
+        "Confirm the device is running and HCL created its loopback console, then retry."
+    ),
+    ErrorCode.CONSOLE_PORT_UNKNOWN: (
+        "Restart the device console in HCL and wait for a project-bound console log entry."
+    ),
+    ErrorCode.OUTPUT_TOO_LARGE: ("Narrow the request or increase server.max_tool_result_bytes, then retry."),
+}
 
 
 def structured_error_payload(
@@ -124,6 +142,9 @@ def _public_domain_error(error: DomainError) -> tuple[str, dict[str, Any] | None
     message = error.message
     if removed_path:
         message = _PATH_SAFE_MESSAGES.get(error.code, error.code.value)
+    next_action = _NEXT_ACTIONS.get(error.code)
+    if next_action:
+        details.setdefault("next_action", next_action)
     return message, details or None
 
 

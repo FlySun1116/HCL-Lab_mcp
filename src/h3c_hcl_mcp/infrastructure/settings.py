@@ -81,6 +81,7 @@ class ServerSettings(BaseModel):
     log_level: str = "INFO"
     max_tool_seconds: int = Field(default=60, ge=1, le=600)
     max_output_chars: int = Field(default=32768, ge=256, le=1048576)
+    max_tool_result_bytes: int = Field(default=262144, ge=1024, le=4194304)
     config_dir: str = Field(default_factory=lambda: str(_default_config_dir()))
 
     @field_validator("config_dir", mode="before")

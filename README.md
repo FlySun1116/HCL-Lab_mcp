@@ -4,7 +4,8 @@
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.x-green.svg)](https://modelcontextprotocol.io/)
 
-`h3c-hcl-mcp` is a local MCP Server for H3C Cloud Lab 5.10.x. It lets Claude,
+`h3c-hcl-mcp` is a local MCP Server targeting H3C Cloud Lab 5.10.x, with the
+current compatibility evidence recorded on HCL 5.10.3. It lets Claude,
 Cursor, and other MCP-compatible clients discover HCL projects, inspect
 topologies and runtime state, and execute controlled read-only Comware commands
 through HCL loopback console ports.
@@ -22,6 +23,8 @@ Current source version: **v0.1.0-beta.2** (unreleased local beta).
   bounded loopback TCP/Telnet + Comware prompt probe.
 - `stdio` initialization, `tools/list`, `tools/call`, structured errors, and
   audit correlation are covered with the official MCP Python Client.
+- Claude Desktop and Cursor configuration examples are provided; a recorded
+  UI-level smoke test for both clients remains a release-candidate exit check.
 - Console command execution is verified end to end with a fake Comware server.
 - A successful command against a real HCL device still requires the selected
   project and device to be running in HCL.
@@ -32,7 +35,7 @@ will become available only after the maintainer approves a public release.
 
 ## Requirements
 
-- Windows with a legally installed H3C Cloud Lab 5.10.x
+- Windows with a legally installed H3C Cloud Lab 5.10.x (validated on 5.10.3)
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 
@@ -172,6 +175,8 @@ command; at most one empty CRLF is used to request the current prompt.
 - Console connections are restricted to loopback.
 - Device output is always treated as untrusted and redacted at the MCP boundary.
 - `redact=false` is rejected in v0.1.
+- `server.max_output_chars` bounds device console capture, while
+  `server.max_tool_result_bytes` hard-limits every final MCP result in UTF-8 bytes.
 - Every invocation records a request ID, outcome, policy result, duration, and
   stable error code when auditing is enabled.
 - stdout is reserved for MCP JSON-RPC; logs and startup messages use stderr.
@@ -185,8 +190,8 @@ uv sync --extra dev
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
-uv run pytest
-uv build
+uv run pytest -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning --cov=h3c_hcl_mcp --cov-report=term-missing --cov-fail-under=85
+uv build --clear
 ```
 
 See [docs/design.md](docs/design.md), [CONTRIBUTING.md](CONTRIBUTING.md), and

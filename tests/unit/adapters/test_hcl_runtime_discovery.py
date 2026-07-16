@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,51 @@ class TestHCLRuntimeDiscovery:
     async def test_discover_project_empty(self, discovery: HCLRuntimeDiscovery):
         results = await discovery.discover_project("unknown_project")
         assert len(results) == 0
+
+    @pytest.mark.asyncio
+    async def test_process_inspection_does_not_block_event_loop(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def slow_process_inspection() -> bool:
+            time.sleep(0.2)
+            return False
+
+        monkeypatch.setattr(
+            "h3c_hcl_mcp.adapters.hcl.runtime_discovery._is_hcl_running",
+            slow_process_inspection,
+        )
+        discovery = HCLRuntimeDiscovery(log_observation=False, cache_ttl_seconds=0)
+
+        started = time.monotonic()
+        task = asyncio.create_task(discovery.discover_project("proj_001"))
+        await asyncio.sleep(0.02)
+        heartbeat_elapsed = time.monotonic() - started
+        await task
+
+        assert heartbeat_elapsed < 0.1
+
+    @pytest.mark.asyncio
+    async def test_log_loading_does_not_block_event_loop(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        discovery = HCLRuntimeDiscovery(process_inspection=False, cache_ttl_seconds=0)
+        original_loader = discovery._load_log_observer
+
+        def slow_log_loader():
+            time.sleep(0.2)
+            return original_loader()
+
+        monkeypatch.setattr(discovery, "_load_log_observer", slow_log_loader)
+
+        started = time.monotonic()
+        task = asyncio.create_task(discovery.discover_project("proj_001"))
+        await asyncio.sleep(0.02)
+        heartbeat_elapsed = time.monotonic() - started
+        await task
+
+        assert heartbeat_elapsed < 0.1
 
     @pytest.mark.asyncio
     async def test_topology_refresh_removes_deleted_devices(self) -> None:
@@ -183,8 +229,12 @@ class TestRealHCLRuntimeDiscovery:
     async def test_default_probe_requires_a_comware_prompt(self):
         async def serve_prompt(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             del reader
-            writer.write(b"\xff\xfb\x01\r\n<H3C>")
-            await writer.drain()
+            try:
+                writer.write(b"\xff\xfb\x01\r\n<H3C>")
+                await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
 
         server = await asyncio.start_server(serve_prompt, "127.0.0.1", 0)
         try:

@@ -26,7 +26,17 @@ from h3c_hcl_mcp.ports.device_transport import DeviceTransport
 from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
 from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
-from h3c_hcl_mcp.ports.secret_provider import SecretProvider
+
+_DESTINATION_PATTERN = r"^[A-Za-z0-9:.][A-Za-z0-9._:-]{0,252}$"
+SafeDestination = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=253,
+        pattern=_DESTINATION_PATTERN,
+        description="IPv4, IPv6, or hostname without whitespace or CLI options",
+    ),
+]
 
 
 def _is_comware_candidate(model: str | None, category: str | None, version: str | None) -> bool:
@@ -41,6 +51,20 @@ def _is_comware_candidate(model: str | None, category: str | None, version: str 
     return normalized_category not in {"终端", "terminal", "host", "pc"}
 
 
+def _classify_read_only_command(command: str) -> CommandType:
+    """Map a read-only CLI command to the policy category it must use."""
+    parts = command.lstrip().split(maxsplit=1)
+    if parts and parts[0].casefold() in {"ping", "tracert"}:
+        return CommandType.DIAGNOSTIC
+    return CommandType.DISPLAY
+
+
+def _public_parsed_data(parsed: dict[str, Any]) -> dict[str, Any] | None:
+    """Remove parser-internal raw copies before returning MCP content."""
+    public = {key: value for key, value in parsed.items() if key not in {"_raw", "raw"}}
+    return public or None
+
+
 def register(mcp: FastMCP, **deps: Any) -> None:
     """Register H3C read-only tools on the MCP server.
 
@@ -53,7 +77,6 @@ def register(mcp: FastMCP, **deps: Any) -> None:
     transport: DeviceTransport = deps["device_transport"]
     parser: CommandParser = deps["command_parser"]
     policy: PolicyEngine = deps["policy_engine"]
-    _secrets: SecretProvider = deps["secret_provider"]  # reserved for future use
     server_settings: ServerSettings = deps["server_settings"]
     device_settings: DeviceSettings = deps["device_settings"]
     default_command_timeout = min(
@@ -62,17 +85,6 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         120,
     )
     preferred_transports = [TransportType(item) for item in device_settings.preferred_transports]
-
-    async def _get_device_name(project_id: str, device_id: int) -> str:
-        """Resolve a device name from the project topology."""
-        try:
-            topology = await project_repo.get_topology(project_id)
-            device = topology.get_device(device_id)
-            if device:
-                return device.name
-        except DomainError:
-            pass
-        return f"device_{device_id}"
 
     async def _resolve_runtime_endpoint(project_id: str, device_id: int) -> Any:
         """Resolve the runtime endpoint for a device.
@@ -117,7 +129,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         request = CommandRequest(
             target=target,
             command=command,
-            command_type=CommandType.DISPLAY,
+            command_type=_classify_read_only_command(command),
             timeout_seconds=float(effective_timeout),
             max_output_chars=server_settings.max_output_chars,
         )
@@ -194,6 +206,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 },
                 target={"project_id": project_id},
                 duration_ms=round(duration_ms, 2),
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:
@@ -205,8 +218,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         name="h3c_get_facts",
         description=(
             "Get basic facts for an H3C device: system name, software version, "
-            "uptime, serial number, and hardware info. Uses 'display version' and "
-            "'display device' commands."
+            "uptime, serial number, and hardware info from 'display version'."
         ),
     )
     async def h3c_get_facts(project_id: str, device_id: int) -> ToolResult:
@@ -221,11 +233,13 @@ def register(mcp: FastMCP, **deps: Any) -> None:
 
         try:
             cmd_result, device_name = await _execute_display(project_id, device_id, "display version")
-            parsed = parser.parse(
-                cmd_result.raw_output,
-                model="unknown",
-                version="unknown",
-                command="display version",
+            parsed = _public_parsed_data(
+                parser.parse(
+                    cmd_result.raw_output,
+                    model="unknown",
+                    version="unknown",
+                    command="display version",
+                )
             )
 
             duration_ms = (time.monotonic() - start) * 1000
@@ -234,13 +248,14 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 data={
                     "device_id": device_id,
                     "device_name": device_name,
-                    "facts": parsed,
+                    "facts": parsed or {},
                     "raw": cmd_result.raw_output if not parsed else None,
                 },
                 target={"project_id": project_id, "device_id": device_id},
                 warnings=cmd_result.warnings,
                 duration_ms=round(duration_ms, 2),
                 truncated=cmd_result.truncated,
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:
@@ -281,11 +296,13 @@ def register(mcp: FastMCP, **deps: Any) -> None:
 
             parsed_data = None
             with contextlib.suppress(DomainError):
-                parsed_data = parser.parse(
-                    cmd_result.raw_output,
-                    model="unknown",
-                    version="unknown",
-                    command=command,
+                parsed_data = _public_parsed_data(
+                    parser.parse(
+                        cmd_result.raw_output,
+                        model="unknown",
+                        version="unknown",
+                        command=command,
+                    )
                 )
 
             duration_ms = (time.monotonic() - start) * 1000
@@ -302,6 +319,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 warnings=cmd_result.warnings,
                 duration_ms=round(duration_ms, 2),
                 truncated=cmd_result.truncated,
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:
@@ -335,11 +353,6 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         start = time.monotonic()
 
         try:
-            if source not in ("running", "startup"):
-                raise DomainError(
-                    code=ErrorCode.INVALID_ARGUMENT,
-                    message=f"Invalid config source: {source}. Use 'running' or 'startup'.",
-                )
             if not redact:
                 raise DomainError(
                     code=ErrorCode.POLICY_DENIED,
@@ -367,6 +380,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 warnings=cmd_result.warnings,
                 duration_ms=round(duration_ms, 2),
                 truncated=cmd_result.truncated,
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:
@@ -378,8 +392,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         name="h3c_get_interfaces",
         description=(
             "Get interface list and status for an H3C device. "
-            "Returns interface name, admin status, operational status, "
-            "speed, duplex, and description for each interface."
+            "Returns interface name, link status, speed, and description for each interface."
         ),
     )
     async def h3c_get_interfaces(project_id: str, device_id: int) -> ToolResult:
@@ -396,11 +409,13 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             cmd_result, device_name = await _execute_display(
                 project_id, device_id, "display interface brief", timeout=30
             )
-            parsed = parser.parse(
-                cmd_result.raw_output,
-                model="unknown",
-                version="unknown",
-                command="display interface brief",
+            parsed = _public_parsed_data(
+                parser.parse(
+                    cmd_result.raw_output,
+                    model="unknown",
+                    version="unknown",
+                    command="display interface brief",
+                )
             )
 
             duration_ms = (time.monotonic() - start) * 1000
@@ -409,12 +424,13 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 data={
                     "device_id": device_id,
                     "device_name": device_name,
-                    "interfaces": parsed.get("interfaces", parsed),
+                    "interfaces": (parsed or {}).get("interfaces", []),
                 },
                 target={"project_id": project_id, "device_id": device_id},
                 warnings=cmd_result.warnings,
                 duration_ms=round(duration_ms, 2),
                 truncated=cmd_result.truncated,
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:
@@ -433,7 +449,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
     async def h3c_ping(
         project_id: str,
         device_id: int,
-        destination: str,
+        destination: SafeDestination,
         count: Annotated[int, Field(ge=1, le=100, description="Number of ping packets")] = 5,
     ) -> ToolResult:
         """Ping a destination from an H3C device.
@@ -451,11 +467,13 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             count = max(1, min(count, 100))
             command = f"ping -c {count} {destination}"
             cmd_result, device_name = await _execute_display(project_id, device_id, command, timeout=30)
-            parsed = parser.parse(
-                cmd_result.raw_output,
-                model="unknown",
-                version="unknown",
-                command="ping",
+            parsed = _public_parsed_data(
+                parser.parse(
+                    cmd_result.raw_output,
+                    model="unknown",
+                    version="unknown",
+                    command="ping",
+                )
             )
 
             duration_ms = (time.monotonic() - start) * 1000
@@ -466,13 +484,14 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                     "device_name": device_name,
                     "destination": destination,
                     "count": count,
-                    "result": parsed,
-                    "raw_output": cmd_result.raw_output if not parsed else None,
+                    "result": parsed or {},
+                    "raw_output": cmd_result.raw_output,
                 },
                 target={"project_id": project_id, "device_id": device_id},
                 warnings=cmd_result.warnings,
                 duration_ms=round(duration_ms, 2),
                 truncated=cmd_result.truncated,
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:
@@ -491,7 +510,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
     async def h3c_trace_route(
         project_id: str,
         device_id: int,
-        destination: str,
+        destination: SafeDestination,
         max_hops: Annotated[int, Field(ge=1, le=255, description="Maximum number of hops")] = 30,
     ) -> ToolResult:
         """Trace route to a destination from an H3C device.
@@ -509,11 +528,13 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             max_hops = max(1, min(max_hops, 255))
             command = f"tracert -m {max_hops} {destination}"
             cmd_result, device_name = await _execute_display(project_id, device_id, command, timeout=60)
-            parsed = parser.parse(
-                cmd_result.raw_output,
-                model="unknown",
-                version="unknown",
-                command="tracert",
+            parsed = _public_parsed_data(
+                parser.parse(
+                    cmd_result.raw_output,
+                    model="unknown",
+                    version="unknown",
+                    command="tracert",
+                )
             )
 
             duration_ms = (time.monotonic() - start) * 1000
@@ -524,13 +545,14 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                     "device_name": device_name,
                     "destination": destination,
                     "max_hops": max_hops,
-                    "result": parsed,
-                    "raw_output": cmd_result.raw_output if not parsed else None,
+                    "result": parsed or {},
+                    "raw_output": cmd_result.raw_output,
                 },
                 target={"project_id": project_id, "device_id": device_id},
                 warnings=cmd_result.warnings,
                 duration_ms=round(duration_ms, 2),
                 truncated=cmd_result.truncated,
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:

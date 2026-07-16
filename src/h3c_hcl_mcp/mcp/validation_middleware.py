@@ -9,7 +9,6 @@ registered protocol handler and direct/in-process calls pass that boundary.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -22,16 +21,26 @@ from pydantic import ValidationError
 from h3c_hcl_mcp.domain.audit import AuditEvent
 from h3c_hcl_mcp.domain.errors import ErrorCode
 from h3c_hcl_mcp.mcp.audit_middleware import _extract_target
-from h3c_hcl_mcp.mcp.error_mapping import structured_error_payload
+from h3c_hcl_mcp.mcp.error_mapping import extract_structured_error, structured_error_payload
+from h3c_hcl_mcp.mcp.output_budget import (
+    OutputBudgetExceeded,
+    bounded_error_payload,
+    compact_converted_result,
+    compact_json,
+    output_too_large_error,
+)
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
 
 logger = logging.getLogger(__name__)
+
+_MAX_AUDIT_TOOL_NAME_CHARS = 256
 
 
 def wrap_call_tool_with_validation(
     mcp: FastMCP,
     audit_sink: AuditSink | None = None,
     timeout_seconds: float | None = None,
+    max_output_bytes: int | None = None,
 ) -> None:
     """Install validation normalization at the ToolManager call boundary.
 
@@ -54,7 +63,8 @@ def wrap_call_tool_with_validation(
         convert_result: bool = False,
     ) -> Any:
         start = time.monotonic()
-        if manager.get_tool(name) is None:
+        tool = manager.get_tool(name)
+        if tool is None:
             request_id = str(uuid.uuid4())
             payload = structured_error_payload(
                 code=ErrorCode.INVALID_ARGUMENT.value,
@@ -70,23 +80,29 @@ def wrap_call_tool_with_validation(
                     request_id=request_id,
                     duration_ms=(time.monotonic() - start) * 1000,
                 )
-            raise ToolError(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+            if max_output_bytes is not None:
+                payload = bounded_error_payload(payload, max_output_bytes)
+            raise ToolError(compact_json(payload))
+
+        async def invoke_tool() -> Any:
+            result = await original_call_tool(
+                name,
+                arguments,
+                context=context,
+                convert_result=False,
+            )
+            if not convert_result:
+                return result
+            converted = tool.fn_metadata.convert_result(result)
+            if max_output_bytes is not None:
+                return compact_converted_result(converted, max_output_bytes)
+            return converted
 
         try:
             if timeout_seconds is None:
-                return await original_call_tool(
-                    name,
-                    arguments,
-                    context=context,
-                    convert_result=convert_result,
-                )
+                return await invoke_tool()
             async with asyncio.timeout(timeout_seconds):
-                return await original_call_tool(
-                    name,
-                    arguments,
-                    context=context,
-                    convert_result=convert_result,
-                )
+                return await invoke_tool()
         except TimeoutError:
             request_id = str(uuid.uuid4())
             payload = structured_error_payload(
@@ -104,11 +120,33 @@ def wrap_call_tool_with_validation(
                     duration_ms=(time.monotonic() - start) * 1000,
                     error_code=ErrorCode.TIMEOUT,
                 )
-            raise ToolError(json.dumps(payload, ensure_ascii=False, separators=(",", ":"))) from None
+            if max_output_bytes is not None:
+                payload = bounded_error_payload(payload, max_output_bytes)
+            raise ToolError(compact_json(payload)) from None
+        except OutputBudgetExceeded as error:
+            request_id = str(uuid.uuid4())
+            if audit_sink is not None:
+                await _audit_invalid_call(
+                    audit_sink=audit_sink,
+                    tool_name=name,
+                    arguments=arguments,
+                    request_id=request_id,
+                    duration_ms=(time.monotonic() - start) * 1000,
+                    error_code=ErrorCode.OUTPUT_TOO_LARGE,
+                )
+            raise output_too_large_error(
+                request_id=request_id,
+                max_bytes=max_output_bytes or error.actual_bytes,
+                actual_bytes=error.actual_bytes,
+            ) from None
         except ToolError as error:
             validation_error = _find_validation_error(error)
             if validation_error is None:
-                raise
+                structured = extract_structured_error(error)
+                if structured is None or max_output_bytes is None:
+                    raise
+                payload = bounded_error_payload({"error": structured}, max_output_bytes)
+                raise ToolError(compact_json(payload)) from None
 
             request_id = str(uuid.uuid4())
             fields = _validation_fields(mcp, name, validation_error)
@@ -130,7 +168,9 @@ def wrap_call_tool_with_validation(
 
             # Do not chain the Pydantic error: the low-level handler must only
             # expose our stable JSON and never Pydantic's documentation URL.
-            raise ToolError(json.dumps(payload, ensure_ascii=False, separators=(",", ":"))) from None
+            if max_output_bytes is not None:
+                payload = bounded_error_payload(payload, max_output_bytes)
+            raise ToolError(compact_json(payload)) from None
 
     manager.call_tool = wrapped_call_tool  # type: ignore[method-assign]
     manager._h3c_validation_wrapped = True  # type: ignore[attr-defined]
@@ -216,7 +256,11 @@ async def _audit_invalid_call(
                 event_id=str(uuid.uuid4()),
                 request_id=request_id,
                 caller="mcp-client",
-                tool=tool_name,
+                tool=(
+                    tool_name
+                    if len(tool_name) <= _MAX_AUDIT_TOOL_NAME_CHARS
+                    else tool_name[: _MAX_AUDIT_TOOL_NAME_CHARS - 1] + "…"
+                ),
                 target=_extract_target(arguments),
                 policy_result="not_evaluated",
                 outcome="error",

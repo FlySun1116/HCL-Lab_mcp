@@ -1,8 +1,9 @@
 """Black-box stdio tests using the official MCP Python client.
 
 Unlike the in-process integration tests, this module launches the installed
-module in a child process and therefore covers CLI settings, stdout framing,
-the protocol handler, and process shutdown together.
+console entry point (or the source module during development) in a child
+process and therefore covers CLI settings, stdout framing, the protocol
+handler, and process shutdown together.
 """
 
 from __future__ import annotations
@@ -22,6 +23,34 @@ from mcp.client.stdio import stdio_client
 from h3c_hcl_mcp.version import VERSION
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+EXPECTED_TOOL_NAMES = {
+    "server_health",
+    "hcl_list_projects",
+    "hcl_get_topology",
+    "hcl_get_runtime",
+    "h3c_list_devices",
+    "h3c_get_facts",
+    "h3c_run_display",
+    "h3c_get_config",
+    "h3c_get_interfaces",
+    "h3c_ping",
+    "h3c_trace_route",
+    "h3c_diff_config",
+    "job_get",
+    "job_cancel",
+    "audit_query",
+}
+
+
+def _server_launch(tmp_path: Path) -> tuple[str, list[str], bool, Path]:
+    """Return command, argument prefix, installation mode, and child cwd."""
+
+    executable = os.environ.get("H3C_HCL_MCP_TEST_EXECUTABLE")
+    if executable:
+        return executable, [], True, tmp_path
+    server_python = os.environ.get("H3C_HCL_MCP_TEST_PYTHON", sys.executable)
+    installed = "H3C_HCL_MCP_TEST_PYTHON" in os.environ
+    return server_python, ["-m", "h3c_hcl_mcp"], installed, (tmp_path if installed else REPOSITORY_ROOT)
 
 
 def _isolated_environment(tmp_path: Path, *, include_source_tree: bool) -> dict[str, str]:
@@ -65,13 +94,12 @@ def _structured_error(result: Any) -> dict[str, Any]:
 async def test_stdio_server_protocol_and_validation(tmp_path: Path) -> None:
     """A no-config child process must serve clean JSON-RPC over stdout."""
     stderr_path = tmp_path / "server.stderr.log"
-    server_python = os.environ.get("H3C_HCL_MCP_TEST_PYTHON", sys.executable)
-    use_installed_distribution = "H3C_HCL_MCP_TEST_PYTHON" in os.environ
+    command, argument_prefix, installed, child_cwd = _server_launch(tmp_path)
     parameters = StdioServerParameters(
-        command=server_python,
-        args=["-m", "h3c_hcl_mcp"],
-        cwd=REPOSITORY_ROOT,
-        env=_isolated_environment(tmp_path, include_source_tree=not use_installed_distribution),
+        command=command,
+        args=argument_prefix,
+        cwd=child_cwd,
+        env=_isolated_environment(tmp_path, include_source_tree=not installed),
         encoding="utf-8",
         encoding_error_handler="replace",
     )
@@ -88,9 +116,7 @@ async def test_stdio_server_protocol_and_validation(tmp_path: Path) -> None:
 
                     listed = await session.list_tools()
                     tool_names = {tool.name for tool in listed.tools}
-                    assert "server_health" in tool_names
-                    assert "audit_query" in tool_names
-                    assert len(tool_names) == 15
+                    assert tool_names == EXPECTED_TOOL_NAMES
 
                     health = await session.call_tool("server_health", {"deep": False})
                     assert health.isError is not True
@@ -105,6 +131,52 @@ async def test_stdio_server_protocol_and_validation(tmp_path: Path) -> None:
                     assert isinstance(error["request_id"], str) and error["request_id"]
                     assert error["fields"][0]["field"] == "limit"
                     assert "pydantic.dev" not in json.dumps(error)
+
+                    # Exercise every remaining public Tool through the wheel
+                    # entry point. This isolated environment intentionally has
+                    # no project/device/job, so stable domain errors are the
+                    # expected result for target-dependent tools.
+                    minimal_calls = {
+                        "hcl_get_topology": {"project_id": "missing"},
+                        "hcl_get_runtime": {"project_id": "missing"},
+                        "h3c_list_devices": {"project_id": "missing"},
+                        "h3c_get_facts": {"project_id": "missing", "device_id": 1},
+                        "h3c_run_display": {
+                            "project_id": "missing",
+                            "device_id": 1,
+                            "command": "display version",
+                        },
+                        "h3c_get_config": {"project_id": "missing", "device_id": 1},
+                        "h3c_get_interfaces": {"project_id": "missing", "device_id": 1},
+                        "h3c_ping": {
+                            "project_id": "missing",
+                            "device_id": 1,
+                            "destination": "192.0.2.1",
+                        },
+                        "h3c_trace_route": {
+                            "project_id": "missing",
+                            "device_id": 1,
+                            "destination": "192.0.2.1",
+                        },
+                        "h3c_diff_config": {"project_id": "missing", "device_id": 1},
+                        "job_get": {"job_id": "missing"},
+                        "job_cancel": {"job_id": "missing"},
+                    }
+                    for tool_name, arguments in minimal_calls.items():
+                        tool_result = await session.call_tool(tool_name, arguments)
+                        tool_error = _structured_error(tool_result)
+                        assert isinstance(tool_error.get("code"), str), tool_name
+                        assert isinstance(tool_error.get("request_id"), str), tool_name
+
+                    audit = await session.call_tool(
+                        "audit_query",
+                        {"tool": "server_health", "limit": 10},
+                    )
+                    assert audit.isError is not True
+                    assert isinstance(audit.structuredContent, dict)
+                    events = audit.structuredContent["data"]["events"]
+                    assert events
+                    assert all(event["tool"] == "server_health" for event in events)
 
         stderr.flush()
         stderr.seek(0)
@@ -137,9 +209,8 @@ async def test_stdio_project_configuration_sources(
         encoding="utf-8",
     )
 
-    server_python = os.environ.get("H3C_HCL_MCP_TEST_PYTHON", sys.executable)
-    use_installed_distribution = "H3C_HCL_MCP_TEST_PYTHON" in os.environ
-    env = _isolated_environment(tmp_path, include_source_tree=not use_installed_distribution)
+    command, argument_prefix, installed, child_cwd = _server_launch(tmp_path)
+    env = _isolated_environment(tmp_path, include_source_tree=not installed)
     env.pop("H3C_CLOUD_LAB_PROJECTS", None)
     server_args: list[str] = []
 
@@ -164,9 +235,9 @@ async def test_stdio_project_configuration_sources(
 
     stderr_path = tmp_path / f"{configuration_source}.stderr.log"
     parameters = StdioServerParameters(
-        command=server_python,
-        args=["-m", "h3c_hcl_mcp", *server_args],
-        cwd=REPOSITORY_ROOT,
+        command=command,
+        args=[*argument_prefix, *server_args],
+        cwd=child_cwd,
         env=env,
         encoding="utf-8",
         encoding_error_handler="replace",
@@ -187,21 +258,20 @@ async def test_stdio_project_configuration_sources(
 @pytest.mark.parametrize("failure_kind", ["missing", "malformed"])
 def test_explicit_invalid_config_fails_before_protocol_start(tmp_path: Path, failure_kind: str) -> None:
     """An explicitly selected missing or malformed config must fail closed."""
-    server_python = os.environ.get("H3C_HCL_MCP_TEST_PYTHON", sys.executable)
-    use_installed_distribution = "H3C_HCL_MCP_TEST_PYTHON" in os.environ
-    env = _isolated_environment(tmp_path, include_source_tree=not use_installed_distribution)
+    command, argument_prefix, installed, child_cwd = _server_launch(tmp_path)
+    env = _isolated_environment(tmp_path, include_source_tree=not installed)
     config_path = tmp_path / "selected.yaml"
     if failure_kind == "malformed":
         config_path.write_text("server: [", encoding="utf-8")
 
     completed = subprocess.run(
-        [server_python, "-m", "h3c_hcl_mcp", "--config", str(config_path)],
+        [command, *argument_prefix, "--config", str(config_path)],
         input="",
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
-        cwd=REPOSITORY_ROOT,
+        cwd=child_cwd,
         env=env,
         timeout=15,
         check=False,

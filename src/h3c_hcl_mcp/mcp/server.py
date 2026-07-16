@@ -17,6 +17,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from h3c_hcl_mcp.adapters.comware.parsers.diagnostics import PingParser, TracerouteParser
 from h3c_hcl_mcp.adapters.comware.parsers.facts import FactsParser
 from h3c_hcl_mcp.adapters.comware.parsers.interfaces import InterfaceBriefParser
 from h3c_hcl_mcp.adapters.comware.session_manager import (
@@ -28,9 +29,7 @@ from h3c_hcl_mcp.adapters.hcl.runtime_discovery import HCLRuntimeDiscovery
 from h3c_hcl_mcp.application.runtime_service import ProjectAwareRuntimeDiscovery
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.infrastructure.audit.store import NullAuditStore, SQLiteAuditStore
-from h3c_hcl_mcp.infrastructure.policy.approvals import ApprovalProviderImpl
 from h3c_hcl_mcp.infrastructure.policy.engine import PolicyEngineImpl
-from h3c_hcl_mcp.infrastructure.secrets import SecretProviderImpl
 from h3c_hcl_mcp.infrastructure.settings import HCLSettings
 from h3c_hcl_mcp.mcp.tools import (
     audit,
@@ -40,7 +39,6 @@ from h3c_hcl_mcp.mcp.tools import (
     health,
     jobs,
 )
-from h3c_hcl_mcp.ports.approval_provider import ApprovalProvider
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
 from h3c_hcl_mcp.ports.command_parser import CommandParser
 from h3c_hcl_mcp.ports.device_transport import DeviceTransport
@@ -48,7 +46,6 @@ from h3c_hcl_mcp.ports.job_store import JobStatus, JobStore
 from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
 from h3c_hcl_mcp.ports.runtime_discovery import RuntimeDiscovery
-from h3c_hcl_mcp.ports.secret_provider import SecretProvider
 from h3c_hcl_mcp.version import VERSION
 
 logger = logging.getLogger(__name__)
@@ -71,6 +68,8 @@ class _CompositeCommandParser(CommandParser):
         self._parsers: list[CommandParser] = [
             FactsParser(),
             InterfaceBriefParser(),
+            PingParser(),
+            TracerouteParser(),
         ]
 
     def supports(self, model: str, version: str, command: str) -> bool:
@@ -171,6 +170,19 @@ def _wrap_tools_with_audit(mcp: FastMCP, audit_sink: AuditSink) -> None:
     logger.info("Audit middleware wrapped %d tools.", wrapped)
 
 
+def _wrap_tools_with_output_budget(mcp: FastMCP, max_bytes: int) -> None:
+    """Place the final result budget inside the outer audit wrapper."""
+
+    from h3c_hcl_mcp.mcp.output_budget import with_output_budget
+
+    wrapped = 0
+    for tool in mcp._tool_manager._tools.values():
+        if hasattr(tool, "fn"):
+            tool.fn = with_output_budget(max_bytes)(tool.fn)
+            wrapped += 1
+    logger.info("Output budget wrapped %d tools at %d bytes.", wrapped, max_bytes)
+
+
 # ---------------------------------------------------------------------------
 # Server factory
 # ---------------------------------------------------------------------------
@@ -186,7 +198,7 @@ def create_server(
     Wires real adapter implementations from:
     - T3: HCLProjectRepository, HCLRuntimeDiscovery
     - T4: FactsParser, InterfaceBriefParser, SessionManagerTransport
-    - T5: PolicyEngineImpl, SQLiteAuditStore, SecretProviderImpl, ApprovalProviderImpl
+    - T5: PolicyEngineImpl and SQLiteAuditStore
 
     Placeholder remains for:
     - JobStore (in-memory placeholder is sufficient for v0.1)
@@ -262,9 +274,6 @@ def create_server(
         audit_sink: AuditSink = SQLiteAuditStore(db_path=audit_db)
     else:
         audit_sink = NullAuditStore()
-    secret_provider: SecretProvider = SecretProviderImpl()
-    approval_prov: ApprovalProvider = ApprovalProviderImpl()
-
     # Placeholder (standalone is fine for v0.1)
     job_store: JobStore = _PlaceholderJobStore()
 
@@ -274,10 +283,8 @@ def create_server(
         "device_transport": device_transport,
         "command_parser": cmd_parser,
         "policy_engine": policy_engine,
-        "approval_provider": approval_prov,
         "audit_sink": audit_sink,
         "job_store": job_store,
-        "secret_provider": secret_provider,
     }
 
     # --- Create the MCP server ---
@@ -315,7 +322,12 @@ def create_server(
         mcp,
         audit_sink=audit_sink,
         timeout_seconds=settings.server.max_tool_seconds,
+        max_output_bytes=settings.server.max_tool_result_bytes,
     )
+
+    # The budget is inside audit so an oversized result is recorded as an
+    # invocation error rather than a successful call whose response vanished.
+    _wrap_tools_with_output_budget(mcp, settings.server.max_tool_result_bytes)
 
     # --- Wrap all tools with audit middleware (BUG-009) ---
     _wrap_tools_with_audit(mcp, audit_sink)

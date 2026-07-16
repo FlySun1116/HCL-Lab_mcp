@@ -412,7 +412,6 @@ HCL-Lab_mcp/
 │        │  ├─ store.py
 │        │  ├─ redact.py
 │        │  └─ schema.sql
-│        ├─ locks.py
 │        ├─ secrets.py
 │        ├─ logging.py
 │        └─ telemetry.py
@@ -585,6 +584,7 @@ server:
   log_level: INFO
   max_tool_seconds: 60
   max_output_chars: 32768
+  max_tool_result_bytes: 262144
 
 hcl:
   install_dir: "F:\\HCL"       # 可省略并自动发现
@@ -1111,6 +1111,11 @@ h3c_hcl_mcp.approval_providers
 ---
 
 ## 15. v0.1 验收标准
+
+核心覆盖率按 v0.1 实际注册和接线的运行路径计算，采用行覆盖率。明确禁用、未注册且标记为
+后续版本的 SSH、NETCONF、capabilities、写审批、SecretProvider 和 `h3c_change` stub
+不进入 v0.1 core 分母；所有 v0.1 已注册 Tool、HCL/console adapter、安全、审计、配置和
+MCP 边界都必须进入分母。CI 以 85% 为硬门槛。
 
 1. Claude Desktop 与 Cursor 可通过 stdio 启动 Server，并列出同一组工具。
 2. 能从 HCL 5.10.x 用户项目解析设备、链路、型号、版本和配置快照路径。

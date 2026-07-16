@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from h3c_hcl_mcp.adapters.hcl.log_observer import (
     LogEventType,
     LogObserver,
@@ -302,3 +304,43 @@ class TestLogObserver:
 
         assert observer.get_project_endpoint("hcl_alpha", 1) is None
         assert observer.is_device_closed("hcl_alpha", 1)
+
+    def test_load_files_preserves_binding_and_current_event_from_bounded_snapshot(self, tmp_path):
+        log_file = tmp_path / "HCL.log"
+        binding = (
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_alpha\hcl_alpha.net"
+            "\n"
+        )
+        created = (
+            "2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)"
+            "\n"
+        )
+        log_file.write_bytes(binding.encode() + (b"X" * 8192) + b"\n" + created.encode())
+
+        observer = LogObserver()
+        observer.load_files([str(log_file)], max_bytes_per_file=1024)
+
+        endpoint = observer.get_project_endpoint("hcl_alpha", 1)
+        assert endpoint is not None
+        assert endpoint.port == 30001
+
+    def test_load_files_limits_rotated_file_count(self, tmp_path):
+        paths = []
+        for device_id in range(1, 4):
+            path = tmp_path / f"HCL.log.{device_id}"
+            path.write_text(
+                f"2024-01-15 12:00:0{device_id} Device S6850_{device_id} "
+                f"(id={device_id}) started, console port: 500{device_id}\n",
+                encoding="utf-8",
+            )
+            os.utime(path, (device_id, device_id))
+            paths.append(str(path))
+
+        observer = LogObserver()
+        observer.load_files(paths, max_files=2)
+
+        assert observer.get_endpoint(1) is None
+        assert observer.get_endpoint(2) is not None
+        assert observer.get_endpoint(3) is not None

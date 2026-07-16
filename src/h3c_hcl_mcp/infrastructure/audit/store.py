@@ -11,6 +11,7 @@ import json
 import logging
 import sqlite3
 import threading
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -93,7 +94,10 @@ class SQLiteAuditStore(AuditSink):
         schema_path = Path(__file__).parent / "schema.sql"
         schema_sql = schema_path.read_text(encoding="utf-8")
 
-        with self._get_connection() as conn:
+        # sqlite3.Connection's context manager commits or rolls back but does
+        # not close the connection. This store opens one connection per
+        # operation, so every call must close it explicitly.
+        with closing(self._get_connection()) as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA foreign_keys=ON;")
             conn.executescript(schema_sql)
@@ -119,6 +123,7 @@ class SQLiteAuditStore(AuditSink):
                         "UPDATE audit_events SET timestamp = ? WHERE event_id = ?",
                         (normalized, row[0]),
                     )
+            conn.commit()
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a new SQLite connection."""
@@ -144,7 +149,7 @@ class SQLiteAuditStore(AuditSink):
 
         with self._lock:
             try:
-                with self._get_connection() as conn:
+                with closing(self._get_connection()) as conn:
                     conn.execute(
                         """INSERT INTO audit_events
                            (event_id, request_id, caller, tool, target,
@@ -165,6 +170,7 @@ class SQLiteAuditStore(AuditSink):
                             event.error_code,
                         ),
                     )
+                    conn.commit()
             except sqlite3.Error as e:
                 logger.error("Failed to append audit event: %s", e)
                 raise DomainError(
@@ -234,7 +240,7 @@ class SQLiteAuditStore(AuditSink):
         params.append(limit)
 
         try:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 rows = conn.execute(query_sql, params).fetchall()
         except sqlite3.Error as e:
             logger.error("Audit query failed: %s", e)
