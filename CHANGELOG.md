@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Version metadata now identifies the candidate as `0.1.0-beta.2`.
 - The v0.1 public surface remains 15 namespaced tools. Proposed short aliases are not registered; `h3c_diff_config` remains an explicit `NOT_IMPLEMENTED` placeholder.
 - Client configuration examples now launch a source-installed local virtual-environment executable. The package has not yet been published to PyPI, so `uvx h3c-hcl-mcp` is not a supported installation path for this candidate.
+- Upgraded checkout, setup-uv, upload-artifact, and gitleaks Actions to current Node 24 releases and pinned every third-party Action to a reviewed full commit SHA.
 
 ### Verification status
 

@@ -143,6 +143,7 @@ beta.2 注册 15 个 Tool：
 23. 同设备 100 并发 fake-console 请求未串线；阻塞 I/O、SQLite/scandir/Telnet 资源和日志读取边界已回归。
 24. CI 已配置 active-v0.1 85% 覆盖率门禁，以及 wheel/sdist 两套独立安装 stdio smoke。
 25. Bug/Feature/Agent Task Issue 表单与 PR 模板已固化模块所有权、验收证据、安全边界和 Agent 交接要求。
+26. 所有第三方 GitHub Actions 已升级到当前 Node 24 版本并固定完整 commit SHA，避免可变 tag 与 Node 20 下线风险。
 
 # 失败项
 
@@ -638,6 +639,28 @@ beta.2 注册 15 个 Tool：
 修复：获得维护者授权后推送候选分支，运行 Actions 并配置/核对保护规则。
 
 验证证据：待远端 workflow URL 与仓库规则截图/查询结果。
+
+## BUG-031
+
+编号：BUG-031
+
+级别：P1
+
+状态：VERIFIED
+
+问题：CI 使用可变 major tag 和旧 Node 20 Action；其中 gitleaks v2 将于 2026-09-16 在 GitHub-hosted runner 停止工作。
+
+复现步骤：检查 workflow 的 `uses:` 引用，并与各 Action 官方最新 release 和 runtime 要求比较。
+
+预期：使用支持 Node 24 的当前版本，且供应链引用固定到审核过的完整 commit SHA。
+
+实际：checkout v7.0.0、setup-uv v8.3.2、upload-artifact v7.0.1、gitleaks v3.0.0 均已按完整 SHA 固定。
+
+根因：早期 CI 使用创建仓库时的 major tag，Dependabot 分支尚未合并且远端 main 落后本地候选。
+
+修复：依据官方 release 与远端 Dependabot 证据升级四个 Action；添加静态检查确保所有 `uses:` 引用都是 40 位 SHA。
+
+验证证据：CI YAML 和全部 Action SHA 静态校验通过；实际 runner 结果仍纳入 BUG-030。
 
 # 优化建议
 

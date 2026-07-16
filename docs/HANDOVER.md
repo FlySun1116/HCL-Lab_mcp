@@ -68,6 +68,7 @@
 
 - `.github/ISSUE_TEMPLATE/` 提供 Bug、Feature 和 Agent Task 表单；Agent Task 强制记录 owned/forbidden files、依赖、验收证据和交接对象。
 - PR 模板固定架构影响、完整门禁、Secret/专有资产、安全策略、真实设备只读与外部发布动作检查项。
+- CI 的 checkout、setup-uv、upload-artifact、gitleaks 已升级到当前 Node 24 版本，并固定到完整 commit SHA；避免 Node 20 下线和可变 major tag 风险。
 
 ## 修改文件
 
@@ -134,6 +135,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 3. `h3c_diff_config`、Job 创建、SSH、NETCONF、HTTP 和所有写操作尚未实现。
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
 5. GitHub Actions 配置已补齐 wheel/sdist 独立安装门禁，但远端 workflow 和 `main` required-check/branch-protection 状态尚未在本地证明。
+6. GitHub 插件只读复核显示远端 `main` 没有 workflow run/status、仓库没有 PR；本地候选仍未推送。
 
 ## 下一阶段任务
 
