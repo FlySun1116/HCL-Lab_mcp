@@ -115,7 +115,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 | `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
 | Python 3.12 干净 wheel | 通过 | 独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.89s** |
 | Python 3.12 干净 sdist | 通过 | 第二个独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.47s** |
-| 制品内容策略 | 通过 | wheel 76 members、sdist 151 members；许可证/schema 存在，无危险扩展名、路径穿越或超大 tracked 文件 |
+| 制品内容策略 | 通过 | wheel 76 members、sdist 156 members；许可证/schema 存在，无危险扩展名、路径穿越或超大 tracked 文件 |
 | `git diff --check` | 通过 | 无空白错误 |
 
 制品 stdio 场景在仓库外工作目录运行并清除 `PYTHONPATH`，精确断言 15 个 Tool、对全部公开 Tool 做最小调用，并验证本轮审计事件的非空过滤查询。
