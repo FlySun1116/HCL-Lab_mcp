@@ -94,6 +94,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## Git commits
 
+- `39ed695 chore: add agent-ready GitHub templates`（Issue forms 与 PR 接管/验收清单）
 - `56c1ef1 fix: complete beta2 release hardening`（诊断、结果预算、脱敏、资源、覆盖率与双制品 CI）
 - `fb5e758 fix: complete beta2 runtime and MCP hardening`（beta.2 实现提交）
 - `f8e578b docs: record beta2 verification evidence`（上一轮验证文档）
