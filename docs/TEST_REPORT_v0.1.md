@@ -18,7 +18,7 @@
 | Python 包版本 | `0.1.0-beta.2`（PEP 440：`0.1.0b2`） |
 | MCP SDK | 官方 MCP Python SDK v1 稳定线（锁定 `<2`） |
 | MCP transport | `stdio` |
-| 实际 MCP Client | Claude Code 2.1.211 隔离临时 profile 已连接；Claude Desktop/Cursor UI 待测 |
+| 实际 MCP Client | Claude Code 2.1.211 隔离临时 profile 已连接；Cursor 3.11.25 CLI 在 MCP 前因 MachineGuid 查询失败；Claude Desktop/Cursor UI 待测 |
 | 真实设备写操作 | 未执行；测试只允许 read-only |
 
 本机路径、用户名、真实项目名称、原始日志和设备配置均未写入本报告或测试 fixture。
@@ -154,7 +154,7 @@ beta.2 注册 15 个 Tool：
 2. PyPI、tag 和 GitHub Release 尚未发布；公共 `uvx` 安装不可用。
 3. `h3c_diff_config` 和 Job 生产用例仍是占位能力。
 4. 短 Tool alias 尚未决策/注册，但 namespaced Tool 的 MCP 可发现性已通过。
-5. 尚未在本机真实 Claude Desktop 与 Cursor UI 中记录同一候选的启动证据；官方 MCP SDK stdio 黑盒测试已经通过。
+5. 尚未在本机真实 Claude Desktop 与 Cursor UI 中记录同一候选的启动证据；Cursor 隔离 CLI 在 MCP 初始化前被自身 Windows MachineGuid 查询阻塞，官方 MCP SDK 与 Claude Code stdio 已通过。
 6. 更新后的 GitHub Actions 尚未由远端 runner 执行，`main` branch protection/required checks 状态也不能从本地证明。
 
 # Bug列表
@@ -613,7 +613,7 @@ beta.2 注册 15 个 Tool：
 
 预期：两者均发现同一组 15 个 Tool，并能完成 `server_health`。
 
-实际：官方 MCP SDK 黑盒通过，Claude Code 2.1.211 隔离临时 profile 已报告 `Connected`；Claude Desktop 与 Cursor GUI 仍没有可审计运行记录。
+实际：官方 MCP SDK 黑盒通过，Claude Code 2.1.211 隔离临时 profile 已报告 `Connected`；Cursor 3.11.25 隔离 CLI 在创建 profile/MCP 连接前因自身 Windows `MachineGuid` 查询失败退出且无残留，Claude Desktop 与 Cursor GUI 仍没有可审计运行记录。
 
 根因：客户端安装/运行状态属于用户桌面外部环境，自动化测试不能证明具体 UI 已配置。
 

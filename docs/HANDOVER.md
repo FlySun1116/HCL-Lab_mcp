@@ -138,7 +138,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
 5. GitHub Actions 配置已补齐 wheel/sdist 独立安装门禁，但远端 workflow 和 `main` required-check/branch-protection 状态尚未在本地证明。
 6. GitHub 插件只读复核显示远端 `main` 没有 workflow run/status、仓库没有 PR；本地候选仍未推送。
-7. Claude Code 隔离连接已通过；Claude Desktop 和 Cursor 仍缺真实 UI 级连接记录，Cursor 的 `--add-mcp` 会写 profile 并启动 GUI，因此未在无授权情况下执行。
+7. Claude Code 隔离连接已通过；Claude Desktop 和 Cursor 仍缺真实 UI 级连接记录。Cursor 3.11.25 的隔离 CLI 尝试在进入 MCP 前因自身 Windows `MachineGuid` 查询失败退出，未创建临时 profile、未留下进程，不能归因于 Server。
 
 ## 下一阶段任务
 
