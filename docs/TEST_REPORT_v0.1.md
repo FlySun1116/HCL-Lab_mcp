@@ -1,210 +1,143 @@
-# HCL-Lab_mcp v0.1.0-beta.1 第三轮回归测试报告
+# HCL-Lab_mcp v0.1 测试报告
 
-> 测试日期：2026-07-15
->
-> 测试角色：外部使用者 / MCP Client / 测试工程师
->
-> 被测提交：`2bd9cb77e4e4bf60e114e8e2b3e2daca5b15c118`
->
-> 上轮提交：`b486adbc1142db2a7ce4eddd261fece9e25e2771`
->
-> 声明版本：`v0.1.0-beta.1`
->
-> 结论：**不通过，NO-GO。**
+> 测试对象：`0.1.0-beta.2` 本地提交候选
+> 实现提交：`fb5e758`
+> 报告日期：2026-07-16
+> 当前结论：**CONDITIONAL GO**（代码与本地制品门禁通过；公开发布仍等待真实运行设备正向验证和维护者授权）
 
-## 执行摘要
-
-本轮 Agent Team 增加了统一 Settings、JSON 配置、Runtime 公式端点和 validation middleware。实际黑盒回归表明：JSON 配置和缺失文件报错已有改善，但三个核心 P0 仍未关闭，而且引入了新的测试和启动回归。
-
-当前版本仍不能让 Claude、Cursor 调用真实 HCL 中的 H3C 设备：
-
-1. PyPI/`uvx` 公开安装仍不可用。
-2. 声称修复真实 HCL parser 的提交没有修改 `project_repository.py`，真实项目仍为 0。
-3. Runtime 把未监听端口报为可用，又在执行命令时报告设备未运行，存在严重假阳性和状态不一致。
-4. 干净环境自动化测试为 **11 failed / 396 passed**，不是提交信息所称的全绿。
-5. Server 现在没有配置文件就拒绝启动，README 的直接启动、环境变量和 `--projects-dir` 均失效。
-6. validation 和 audit 的上一轮问题没有被实际修复。
-
-发布判定：**NO-GO，不具备 beta 外部可用性。**
+本报告替代 beta.1 的旧失败快照。所有“已修复”结论均以当前源码、自动化测试或本机只读观察为依据；没有把未运行设备上的命令伪造为成功。仓库尚未发布 PyPI、tag 或 GitHub Release。
 
 # 测试环境
 
-| 项目 | 实际环境 |
+| 项目 | 环境 |
 |---|---|
-| 操作系统 | Windows 11，build `10.0.26200`，Asia/Shanghai |
-| 仓库来源 | 从 GitHub 全新 clone |
-| commit | `2bd9cb77e4e4bf60e114e8e2b3e2daca5b15c118` |
-| 分支 | `main`，与 `origin/main` 一致 |
-| Git tag | 未发现 beta tag |
-| Python | wheel：CPython `3.13.12`；开发门禁：CPython `3.14.5` |
-| uv | `0.11.14` |
-| MCP SDK | `1.28.1` |
-| wheel | `h3c_hcl_mcp-0.1.0b1-py3-none-any.whl` |
-| HCL | H3C Cloud Lab `5.10.3`，`F:\HCL` |
-| HCL 进程 | SimwareClient、SimwareMultiCC、SimwareWrapper 正在运行 |
-| 真实项目根目录 | `C:\Users\Sun-_-\HCL\Projects` |
-| 真实项目 | `hcl_1e910d518140` |
-| MCP Client | 官方 MCP Python SDK `ClientSession` + `stdio_client` |
+| 操作系统 | Windows，本机 HCL 环境 |
+| HCL | H3C Cloud Lab 5.10.3 |
+| 项目主运行时 | Python 3.14.5（冻结候选全量测试） |
+| 发布目标运行时 | Python 3.12.13（干净 beta.2 wheel 已验证） |
+| Python 包版本 | `0.1.0-beta.2`（PEP 440：`0.1.0b2`） |
+| MCP SDK | 官方 MCP Python SDK v1 稳定线（锁定 `<2`） |
+| MCP transport | `stdio` |
+| 真实设备写操作 | 未执行；测试只允许 read-only |
 
-真实 HCL 测试仅执行项目发现和两条只读 `display` 请求；没有改动设备配置、项目文件或进程状态。
+本机路径、用户名、真实项目名称、原始日志和设备配置均未写入本报告或测试 fixture。
 
 # 测试项目
 
-## 第一阶段：安装、构建和启动
+## 第一阶段：安装与配置
 
-| 测试项 | 结果 | 实际 |
+| 项目 | 当前结果 | 证据/说明 |
 |---|---|---|
-| GitHub 全新 clone | 通过 | HEAD 与远端一致 |
-| README：`uvx h3c-hcl-mcp --version` | 失败 | package registry 找不到包 |
-| `uv build` | 通过 | wheel 和 sdist 生成成功 |
-| 干净 Python 3.13 venv 安装 wheel | 通过 | 安装成功 |
-| CLI `--version` | 通过 | `v0.1.0-beta.1` |
-| 无配置直接启动 | 失败 | 提示 No configuration file found 后退出 |
-| 仅设置 `H3C_CLOUD_LAB_PROJECTS` | 失败 | 在读取环境变量前因无配置文件退出 |
-| 仅使用 `--projects-dir` | 失败 | 在应用 CLI override 前因无配置文件退出 |
-| 显式 JSON 配置 | 通过 | initialize 成功，项目目录生效 |
-| 显式 YAML 配置 | 失败 | wheel 缺少 `yaml` 模块，Server 退出 |
-| 显式缺失配置文件 | 通过 | 明确报错并退出，不再静默忽略 |
+| 开发依赖安装 | 通过 | 当前虚拟环境可运行全部源码测试 |
+| 无配置启动 | 通过 | 官方 stdio 子进程完成 initialize/list/call；采用安全默认值 |
+| `--projects-dir` | 通过 | 子进程发现临时项目 fixture |
+| 嵌套环境变量 | 通过 | JSON 列表配置项目目录生效 |
+| JSON 配置 | 通过 | 显式项目目录生效 |
+| YAML 配置 | 通过 | `PyYAML` 已加入运行依赖，显式项目目录生效 |
+| 显式缺失配置 | 通过 | 退出码 1、stdout 为空、stderr 明确报错 |
+| 显式损坏配置 | 通过 | 在 MCP 协议启动前失败关闭 |
+| beta.2 wheel/sdist | 通过 | `uv build` 生成 `0.1.0b2` wheel/sdist；wheel 含 75 项及审计 `schema.sql` |
+| Python 3.12 干净安装 | 通过 | Python 3.12.13 从 wheel 安装 `0.1.0b2`；官方 stdio 7 passed in 7.43s |
+| 公共 registry 安装 | 失败/未发布 | PyPI 不存在 beta.2，不能使用 `uvx h3c-hcl-mcp` |
 
-README 仍写 `Current version: v0.0.1 (pre-alpha)`，与本地 beta 包不一致。
+## 第二阶段：MCP 协议
 
-## 第二阶段：质量门禁
+官方 `mcp.ClientSession` 启动真实子进程，不使用进程内私有调用代替 stdio 验收。
 
-| 检查 | 结果 |
+| 测试 | 结果 | 实际行为 |
+|---|---|---|
+| `initialize` | 通过 | `serverInfo.name` 与配置一致，版本为 beta.2 |
+| `tools/list` | 通过 | 返回 15 个 namespaced Tool |
+| `tools/call` 成功路径 | 通过 | `server_health(deep=false)` 返回结构化成功结果 |
+| `tools/call` Schema 失败 | 通过 | 返回 `isError=true` 和结构化 `INVALID_ARGUMENT` |
+| validation 隐私 | 通过 | 不含 Pydantic `input_value` 或外部文档 URL |
+| stdout framing | 通过 | 官方客户端可连续解析 JSON-RPC；启动文本位于 stderr |
+| request/audit 关联 | 通过 | Schema 与领域错误的响应、事件使用相同 request_id/错误码 |
+| 未知 Tool | 通过 | 稳定 `INVALID_ARGUMENT`、带 request_id，并写入同一审计事件 |
+| 全局 Tool 超时 | 通过 | `server.max_tool_seconds` 在 ToolManager 边界返回稳定 `TIMEOUT` |
+
+## 第三阶段：Tool 功能
+
+beta.2 注册 15 个 Tool：
+
+| Tool | 当前状态 | 验证结论 |
+|---|---|---|
+| `server_health` | 可用 | shallow 成功；deep 使用真实项目/runtime 路径，不再无条件报 healthy |
+| `hcl_list_projects` | 可用 | fixture 与本机 HCL 5.10.3 项目均可发现；响应不含绝对路径 |
+| `hcl_get_topology` | 可用 | 真实格式与 fixture 可解析；路径攻击被拒绝 |
+| `hcl_get_runtime` | 可用 | 未验证 prompt 的端口不会成为 endpoint；project/device 查询一致 |
+| `h3c_list_devices` | 可用 | H3C/Comware 候选保留，PC/终端过滤；operable 依赖 verified endpoint |
+| `h3c_get_facts` | 条件可用 | fake console 链路通过；真实运行设备正向路径待测 |
+| `h3c_run_display` | 条件可用 | 策略、会话和 fake console 通过；真实运行设备正向路径待测 |
+| `h3c_get_config` | 条件可用 | `running/startup` Schema 正确；强制脱敏；`redact=false` 被拒绝 |
+| `h3c_get_interfaces` | 条件可用 | parser/fake transport 通过；真实运行设备正向路径待测 |
+| `h3c_ping` | 条件可用 | 参数边界和命令策略通过；真实运行设备正向路径待测 |
+| `h3c_trace_route` | 条件可用 | 参数边界和命令策略通过；真实运行设备正向路径待测 |
+| `h3c_diff_config` | 占位 | 稳定返回 `NOT_IMPLEMENTED`，没有伪装成功 |
+| `job_get` | 占位 | Tool 可发现；当前 JobStore 尚不创建生产 Job |
+| `job_cancel` | 占位 | Tool 可发现；当前 JobStore 尚不创建生产 Job |
+| `audit_query` | 可用 | 支持 request/tool/device/time/limit；时间和范围错误为 `INVALID_ARGUMENT` |
+
+用户早期验收名称 `list_devices`、`execute_command`、`configure_device`、`get_device_status`、`ping_test` 没有注册。当前正式契约使用 namespaced Tool；`configure_device` 属 v0.2 写能力。短 alias 是否增加仍由维护者依据 `docs/TOOL_ALIAS_PROPOSAL.md` 决策，不能在 beta.2 检阅中擅自改变公共 Schema。
+
+## 第四阶段：真实 HCL 5.10.3（只读）
+
+| 测试 | 结果 | 证据 |
+|---|---|---|
+| 真实项目发现 | 通过 | 读取 `projectInfo`/`deviceInfoList` 实际格式 |
+| 真实 `.net` | 通过 | 解析嵌套 `[vbox]` / `[[MODEL name]]` 设备与链路 |
+| 元数据合并 | 通过 | `.net` ID 权威、名称大小写不敏感合并、无异常 warning |
+| H3C 节点过滤 | 通过 | S6850 类节点保留，PC 类节点不作为 H3C 可操作设备 |
+| 目标项目 runtime | 通过（负向） | 官方 ClientSession：6 个设备、running_count=0、2 个 H3C candidate 均不可操作 |
+| 关闭端口处理 | 通过（负向） | 30001/30002 关闭，未被公式或 Simware/HCL 进程误报为 operable |
+| `display version` | 通过（负向）/正向待测 | 官方 ClientSession 返回 `DEVICE_NOT_RUNNING` |
+| `display ip interface brief` | 通过（负向）/正向待测 | 官方 ClientSession 返回 `DEVICE_NOT_RUNNING` |
+| 配置命令 | 未执行 | v0.1 禁止写操作 |
+
+这证明 parser 与“无假阳性”负向路径可用，但不能证明真实 console 的完整成功链路。最终发布候选必须在维护者从 HCL GUI 打开目标项目并启动设备后，只读执行两条允许命令。
+
+## 第五阶段：质量门禁
+
+冻结 beta.2 候选后的最终快照：
+
+| 检查 | 最终结果 |
 |---|---|
-| `uv run ruff check .` | 通过 |
-| `uv run ruff format --check .` | 通过，89 个文件已格式化 |
-| `uv run mypy src` | 通过，67 个源文件无错误 |
-| `uv build` | 通过 |
-| `uv run python -m pytest` | **失败：11 failed，396 passed，共 407 项** |
-
-11 个失败均集中在新增 Settings 测试：项目添加了 `types-pyyaml` 类型桩，却没有添加运行依赖 `PyYAML`。因此 `import yaml` 失败，YAML、环境变量优先级和 CLI override 测试随之失败。
-
-这不是测试环境偶发问题：干净 wheel 环境直接执行 `import yaml` 同样得到 `ModuleNotFoundError`。
-
-## 第三阶段：MCP 协议
-
-在显式 JSON 配置下：
-
-| 测试项 | 结果 | 实际 |
-|---|---|---|
-| `initialize` | 通过 | 协议 `2025-11-25` |
-| `serverInfo.version` | 通过 | `0.1.0-beta.1` |
-| `tools/list` | 通过 | 15 个 Tool |
-| `tools/call` 成功路径 | 通过 | text 与 structuredContent 可用 |
-| 领域错误 `isError` | 通过 | `DEVICE_NOT_RUNNING` 等为 true |
-| 非法 source/count | 失败 | 仍返回裸 Pydantic 文本和 docs URL |
-| validation middleware | 失败 | stdio 实际调用路径未被成功拦截 |
-
-新增 `validation_middleware.py` 没有改变官方 stdio Client 的实际输出。`h3c_get_config(source="snapshot")` 和 `h3c_ping(count=0)` 仍没有项目统一的 `INVALID_ARGUMENT` payload 或 request_id。
-
-## 第四阶段：全部 Tool
-
-15 个已注册 Tool 均完成调用或负向路径验证。
-
-| Tool | 结果 | 判定 |
-|---|---|---|
-| `server_health` | 成功 | 通过 |
-| `hcl_list_projects` | JSON fixture 成功；真实 HCL 返回 0 | 真实功能失败 |
-| `hcl_get_topology` | fixture 成功；真实项目 PROJECT_NOT_FOUND | 失败 |
-| `hcl_get_runtime` | fixture 返回两个虚假的 running endpoint；真实项目失败 | 失败且存在假阳性 |
-| `h3c_list_devices` | fixture 报 operable=2；真实项目失败 | 失败且存在假阳性 |
-| `h3c_get_facts` | DEVICE_NOT_RUNNING | 失败 |
-| `h3c_run_display` | DEVICE_NOT_RUNNING；真实命令 DEVICE_NOT_FOUND | 失败 |
-| `h3c_get_config` | DEVICE_NOT_RUNNING | 失败 |
-| `h3c_get_interfaces` | DEVICE_NOT_RUNNING | 失败 |
-| `h3c_ping` | DEVICE_NOT_RUNNING | 失败 |
-| `h3c_trace_route` | DEVICE_NOT_RUNNING | 失败 |
-| `h3c_diff_config` | NOT_IMPLEMENTED / isError=true | 错误语义正确；能力不可用 |
-| `job_get` | 缺失 job 返回 INVALID_ARGUMENT | 负向路径通过 |
-| `job_cancel` | 缺失 job 返回 INVALID_ARGUMENT | 负向路径通过 |
-| `audit_query` | 能查询记录 | 部分通过，内容仍错误 |
-
-用户验收清单中的 `list_devices`、`execute_command`、`configure_device`、`get_device_status`、`ping_test` 仍未注册。仓库新增了 `docs/TOOL_ALIAS_PROPOSAL.md`，但尚未形成已确认的公共契约或实际 alias。
-
-## 第五阶段：Runtime 假阳性专项
-
-合成项目有两台设备。在本机 HCL 进程存在的情况下，Server 返回：
-
-| 设备 | Server 状态 | Server endpoint | 实际端口 |
-|---|---|---|---|
-| Device 1 | running / console_available / operable | `127.0.0.1:30001` | 未监听 |
-| Device 2 | running / console_available / operable | `127.0.0.1:30002` | 未监听 |
-
-紧接着在同一个 MCP 会话调用 `h3c_run_display`，又返回：
-
-`DEVICE_NOT_RUNNING: Device 1 is not running (state: unknown)`
-
-根因：
-
-1. `discover_project()` 将 UNKNOWN 临时转换为 RUNNING，并临时生成公式端点。
-2. 公式端点没有 TCP 探测，更没有 Comware prompt 身份验证。
-3. `discover_device()` 直接读取原始 UNKNOWN 状态，不复用 `discover_project()` 的有效状态。
-4. 仅检测到任意 HCL 进程就把所有登记设备视为 running，不能代表具体项目或设备已启动。
-
-这是安全和可靠性问题。Agent 可能根据 `operable=true` 选择设备，但下一步必然失败；更危险的是将来如果该端口被其他服务监听，Server 可能连接错误目标。
-
-## 第六阶段：真实 HCL 5.10.3
-
-使用显式 JSON 将 `hcl.projects_dirs` 指向真实项目根目录。
-
-| 测试项 | 结果 | 实际 |
-|---|---|---|
-| `hcl_list_projects` | 失败 | count=0 |
-| `hcl_get_topology hcl_1e910d518140` | 失败 | PROJECT_NOT_FOUND |
-| `hcl_get_runtime` | 失败 | PROJECT_NOT_FOUND |
-| `h3c_list_devices` | 失败 | PROJECT_NOT_FOUND |
-| `display version` | 失败 | DEVICE_NOT_FOUND |
-| `display ip interface brief` | 失败 | DEVICE_NOT_FOUND |
-
-本轮声称修复 BUG-002 的提交 `3569eb5` 实际修改的是：
-
-- `config/config.example.json`
-- `docs/TOOL_ALIAS_PROPOSAL.md`
-- `mcp/validation_middleware.py`
-- `tests/unit/infrastructure/test_settings.py`
-
-没有修改 `adapters/hcl/project_repository.py`。该 parser 仍读取错误的 `projectId/projectName/deviceId/deviceName`，而本机真实字段是 `projectInfo.name/path` 和 `deviceInfoList.resource*`。
-
-## 第七阶段：审计
-
-BUG-009 在本轮没有关闭：
-
-- DEVICE_NOT_RUNNING 仍记录为 INTERNAL_ERROR。
-- NOT_IMPLEMENTED 仍记录为 INTERNAL_ERROR。
-- INVALID_ARGUMENT 仍记录为 INTERNAL_ERROR。
-- response、日志和 AuditEvent 使用不同 request_id。
-- 参数 Schema 校验失败不产生事件。
-- 所有工具异常仍被写为 policy_result=denied。
-
-本轮新增 validation middleware 没有接入审计，也没有解决调用关联。
+| `uv run --locked ruff check .` | 通过 |
+| `uv run --locked ruff format --check .` | 通过：93 个文件 |
+| `uv run --locked mypy src` | 通过：68 个源文件 |
+| `uv run --locked pytest` | 通过：**489 passed in 19.34s**，Python 3.14.5 |
+| `uv build` | 通过：`0.1.0b2` wheel/sdist |
+| Python 3.12 wheel stdio | 通过：**7 passed in 7.43s** |
+| `git diff --check` | 通过 |
 
 # 成功项
 
-1. 本地 wheel/sdist 可构建和安装。
-2. CLI、wheel、health 和 initialize 版本一致。
-3. JSON 配置现在确实生效。
-4. 缺失的显式配置文件会明确失败。
-5. MCP initialize、tools/list 和普通 tools/call 正常。
-6. 15 个 Tool 可发现，领域错误 isError=true。
-7. ruff、format 和 mypy 通过。
-8. 启动提示不再重复输出。
-9. Tool alias 差异已有独立提案文档，但尚待决策。
+1. 真实 HCL 5.10.x JSON/.net parser 已替换 beta.1 的错误字段假设。
+2. 项目 ID 路径穿越、绝对路径、分隔符和 root-escape 检查已覆盖。
+3. Runtime 不再使用公式或“任意 HCL 进程”制造 running/operable 假阳性。
+4. 日志绑定、console close/rebind、loopback 和 Comware prompt 验证有脱敏 fixture 测试。
+5. 项目级和设备级 runtime 共用状态来源与短期缓存。
+6. CLI/env/JSON/YAML/无配置/非法配置均有 stdio 子进程覆盖。
+7. 官方 MCP Client 可 initialize、列出 15 个 Tool、调用 Tool 并获得结构化结果。
+8. Schema 失败为稳定 `INVALID_ARGUMENT`，response/audit request_id 可关联。
+9. 审计区分 `policy_result` 与 `outcome`，保留真实错误码；禁用时不创建数据库。
+10. 设备输出在 MCP 边界强制脱敏，不能通过 `redact=false` 绕过。
+11. PC/终端节点过滤、设备连接上下文和并发防串设备测试已覆盖。
+12. 真实项目未运行时返回 `DEVICE_NOT_RUNNING`，没有伪造命令成功。
+13. 策略配置只能收紧内置命令规则，配置 allowlist/deny pattern 不能绕过强制注入和危险命令检查。
+14. 未知 Tool、Schema 失败和全局 Tool 超时都有稳定错误码、request_id 和单一审计事件。
+15. Telnet prompt/EOF/timeout/cancelled 路径会失效连接，迟到输出不会进入下一条命令。
+16. 错误响应与拓扑响应不会泄漏 console buffer、配置路径或本机路径。
+17. PEM/OpenSSH/EC/ENCRYPTED 及截断私钥块、SNMPv3 凭据均有脱敏回归。
+18. HCL 文件扫描在线程中执行，不阻塞 stdio 事件循环；所有合法 Tool 受全局超时保护。
+19. beta.2 wheel/sdist、Python 3.12.13 干净安装和 7 个官方 stdio 场景全部通过。
 
 # 失败项
 
-1. 公开安装仍不可用。
-2. 无配置、仅环境变量和仅 `--projects-dir` 都无法启动。
-3. YAML 运行依赖缺失。
-4. 407 项测试中有 11 项失败。
-5. 真实 HCL parser 实际没有被修改。
-6. 真实项目仍无法发现。
-7. Runtime 报告未监听端口为 operable。
-8. Runtime 列表与单设备查询状态互相矛盾。
-9. 两条真实 display 命令仍失败。
-10. validation middleware 没有改变 stdio 输出。
-11. 审计错误码、request_id 和覆盖范围仍错误。
-12. README 版本和启动方式仍与实现不一致。
+1. 真实运行设备的 `display version` 和 `display ip interface brief` 正向链路尚未验证。
+2. PyPI、tag 和 GitHub Release 尚未发布；公共 `uvx` 安装不可用。
+3. `h3c_diff_config` 和 Job 生产用例仍是占位能力。
+4. 短 Tool alias 尚未决策/注册，但 namespaced Tool 的 MCP 可发现性已通过。
 
 # Bug列表
 
@@ -212,216 +145,330 @@ BUG-009 在本轮没有关闭：
 
 编号：BUG-001
 
-状态：未修复
+级别：P0
 
-优先级：P0
+状态：OPEN
 
-问题：外部用户仍无法从 package registry 安装，README 和发布元数据不闭环。
+问题：公开 package registry 没有 beta.2，外部用户不能按 `uvx h3c-hcl-mcp` 安装。
 
-复现步骤：执行 `uvx h3c-hcl-mcp --version`。
+复现步骤：在未安装本地源码/本地 wheel 的干净环境尝试从 PyPI 启动包。
 
-预期：安装发布版并输出 beta 版本。
+预期：发布授权后能安装固定版本并返回一致的 Server 版本。
 
-实际：registry 找不到包；没有 beta tag；README 仍声明 v0.0.1。
+实际：当前没有 beta.2 PyPI 包、tag 或 GitHub Release。
 
-建议：在核心功能通过后建立 TestPyPI/PyPI、GitHub Release、tag 和全新 Windows 安装 smoke；发布前不要用本地 wheel 结果关闭此 Bug。
+根因：候选尚未完成最终质量门禁和维护者发布授权。
+
+修复：先完成本报告所有退出检查，再按发布流程申请授权；发布前文档只提供源码虚拟环境配置。
+
+验证证据：当前客户端示例已移除未发布的 `uvx` 路径。
 
 ## BUG-002
 
 编号：BUG-002
 
-状态：未修复，提交内容与提交说明不一致
+级别：P0
 
-优先级：P0
+状态：VERIFIED
 
-问题：真实 HCL parser 没有实际修改，真实项目仍为 0。
+问题：beta.1 无法解析真实 HCL 5.10.3 项目。
 
-复现步骤：显式配置真实项目根目录，调用 list/topology。
+复现步骤：读取包含 `projectInfo`、`deviceInfoList.resource*` 和嵌套 `.net` 的项目。
 
-预期：发现 `hcl_1e910d518140`。
+预期：列出项目，并用 `.net` ID 构建设备和链路。
 
-实际：count=0、PROJECT_NOT_FOUND；相关提交没有修改 parser 文件。
+实际：beta.2 的 synthetic-real fixture 和本机真实项目均成功。
 
-建议：Lead 先核对 `git show --name-only 3569eb5`；重新建立 Parser Agent 任务，Owned files 必须包含 project_repository、net parser、真实脱敏 fixture 和对应测试；用本机实际文件黑盒验收。
+根因：旧 parser 假定了不存在的扁平字段和标准 INI 结构。
+
+修复：实现真实字段归一化和 ConfigObj 风格嵌套 parser，按名称合并来源。
+
+验证证据：parser/repository 单元测试与本机只读项目检查通过。
 
 ## BUG-003
 
 编号：BUG-003
 
-状态：修复无效并引入假阳性
+级别：P0
 
-优先级：P0
+状态：VERIFIED
 
-问题：Runtime 把未监听公式端口报告为 running/operable，随后单设备调用又报告未运行。
+问题：beta.1 把未监听的公式端口报告为 running/operable，project/device 查询互相矛盾。
 
-复现步骤：先调用 hcl_get_runtime 和 h3c_list_devices，再调用 h3c_run_display。
+复现步骤：HCL 进程存在但目标项目未打开时查询 runtime 和设备列表。
 
-预期：只有经过 TCP 和 Comware prompt 验证的 endpoint 才能 operable；同一会话状态一致。
+预期：没有明确日志绑定和 prompt 验证就不得发布 endpoint。
 
-实际：30001/30002 未监听却 operable=true；display 返回 DEVICE_NOT_RUNNING。
+实际：beta.2 返回 running_count=0、无 endpoint，设备命令返回 `DEVICE_NOT_RUNNING`。
 
-建议：删除“仅 HCL 进程存在即全部 running”的逻辑；公式只能生成 candidate，不能成为 available endpoint；实现 TCP probe、prompt 验证和单一 runtime cache；discover_project/discover_device 共用同一状态来源。
+根因：旧实现把 HCL 进程、端口公式和设备运行态错误等同。
+
+修复：日志状态机、candidate/probe 分离、Comware prompt 验证、共享 cache 和 project-aware 注册。
+
+验证证据：closed/rebound/formula/prompt 自动化测试及本机负向检查通过。
 
 ## BUG-004
 
 编号：BUG-004
 
-状态：部分修复并引入启动回归
+级别：P1
 
-优先级：P1
+状态：VERIFIED
 
-问题：JSON 和缺失文件处理已修复，但 YAML 不可用，而且 Server 现在强制要求配置文件。
+问题：beta.1 强制配置文件，YAML/环境变量/CLI 启动路径不闭环。
 
-复现步骤：分别无配置启动、仅环境变量启动、仅 `--projects-dir` 启动、YAML 启动、JSON 启动。
+复现步骤：分别使用无配置、CLI、环境变量、JSON、YAML、显式缺失和损坏配置启动子进程。
 
-预期：安全默认值允许直接启动；CLI/env 可独立覆盖；README YAML/JSON 均可用。
+预期：前五种可用；显式错误文件在协议前失败。
 
-实际：前三种因 No configuration file found 退出；YAML 因缺 PyYAML 退出；只有 JSON 成功。
+实际：行为符合预期。
 
-建议：没有显式 `--config` 时使用强类型默认值并继续应用 env/CLI；只有显式路径缺失才失败；把 PyYAML 放入正式 dependencies；增加从 wheel 执行的五种 stdio smoke。
+根因：旧 loader 将默认文件缺失和显式文件错误混为一类，且依赖/merge 不完整。
+
+修复：安全默认值、严格显式文件、PyYAML 运行依赖、嵌套 env JSON coercion。
+
+验证证据：`tests/integration/test_stdio_client.py` 的 7 个场景包含上述启动路径。
 
 ## BUG-005
 
 编号：BUG-005
 
-状态：等待维护者确认
+级别：P2
 
-优先级：P1
+状态：BLOCKED
 
-问题：五个验收 Tool 名称仍不存在，只有提案文档。
+问题：早期验收提示词使用五个短 Tool 名称，当前公共契约使用 15 个 namespaced Tool。
 
-复现步骤：检查 tools/list 或调用五个名称。
+复现步骤：检查 `tools/list` 中是否存在 `list_devices` 等短名称。
 
-预期：维护者确认后的稳定契约可用。
+预期：由维护者明确 alias 策略，避免 Agent 擅自扩展公共 API。
 
-实际：仍只有 namespaced Tool。
+实际：短名称未注册；正式 namespaced Tool 可发现。
 
-建议：由维护者对 `docs/TOOL_ALIAS_PROPOSAL.md` 作决定；未确认前不要由 Agent 单方面关闭。
+根因：用户验收用语与项目 namespaced 契约来源不同。
+
+修复：等待维护者对 `docs/TOOL_ALIAS_PROPOSAL.md` 作产品决策；v0.1 不开放 `configure_device`。
+
+验证证据：官方 `tools/list` 返回 15 个正式 Tool。
 
 ## BUG-009
 
 编号：BUG-009
 
-状态：未修复
+级别：P1
 
-优先级：P1
+状态：VERIFIED
 
-问题：审计仍丢失真实错误码和关联 ID，并漏记 validation failure。
+问题：错误审计曾丢失真实 error code/request_id，并把执行失败误记为策略拒绝。
 
-复现步骤：调用 DEVICE_NOT_RUNNING、NOT_IMPLEMENTED、INVALID_ARGUMENT 和 schema failure，再查询 audit。
+复现步骤：触发 `PROJECT_NOT_FOUND`、`NOT_IMPLEMENTED`、`INVALID_ARGUMENT` 和 Schema failure 后查询 SQLite。
 
-预期：真实错误码、同一 request_id、准确 outcome/policy、每次尝试都有记录。
+预期：响应和事件 ID/错误码一致，policy 与 outcome 分离。
 
-实际：前三种均为 INTERNAL_ERROR；ID 不一致；schema failure 无记录；异常统一 denied。
+实际：beta.2 符合预期，Schema failure 也有事件。
 
-建议：把 request context、validation、Tool 调用、error mapping 和 audit 放在同一官方调用边界，不要分别修改 FastMCP 私有对象。
+根因：validation、error mapping 与 audit 分散在不同调用边界。
+
+修复：包装实际 ToolManager 调用边界，复用 result request_id，引入 `outcome` 字段和迁移。
+
+验证证据：协议级 validation/audit 集成测试通过。
 
 ## BUG-014
 
 编号：BUG-014
 
-状态：修复无效
+级别：P1
 
-优先级：P1
+状态：VERIFIED
 
-问题：validation middleware 已增加但标准 stdio Client 输出未变化。
+问题：beta.1 validation middleware 没有作用于官方 stdio 调用路径。
 
-复现步骤：传 source=snapshot 或 count=0。
+复现步骤：传入非法 `source`、`count` 或 `audit_query.limit`。
 
-预期：稳定 INVALID_ARGUMENT、字段、范围、request_id。
+预期：稳定、结构化 `INVALID_ARGUMENT`，包含字段/范围/request_id。
 
-实际：裸 Pydantic 英文文本和外部 docs URL。
+实际：beta.2 符合预期且不泄漏 Pydantic 细节。
 
-建议：为官方 MCP SDK stdio 路径写失败优先 e2e test，再选择正确的 SDK hook；不要用进程内假调用证明中间件生效。
+根因：旧实现替换了 FastMCP 注册完成后不会被协议 handler 调用的表面方法。
+
+修复：包装实际 ToolManager 的 `call_tool`。
+
+验证证据：内存协议测试和真实 stdio 子进程测试通过。
 
 ## BUG-016
 
 编号：BUG-016
 
-状态：新增
+级别：P1
 
-优先级：P1
+状态：VERIFIED
 
-问题：干净环境测试失败，YAML 运行依赖被错误地替换为类型桩。
+问题：beta.1 干净环境缺少 YAML 运行依赖。
 
-复现步骤：全新 clone 后执行 `uv sync --extra dev` 和 `uv run python -m pytest`。
+复现步骤：安装包后导入 `yaml` 或使用 YAML 配置启动。
 
-预期：全部测试通过。
+预期：运行依赖包含 PyYAML。
 
-实际：11 failed / 396 passed；`ModuleNotFoundError: No module named 'yaml'`。
+实际：`pyproject.toml`/锁文件包含 PyYAML，YAML stdio 测试通过。
 
-建议：将 `PyYAML` 加入运行 dependencies，将 `types-PyYAML` 保留在 dev；删除 Agent 环境的隐式全局依赖；CI 必须从空缓存/干净 venv 验证。
+根因：只添加了类型桩，没有添加运行包。
 
-## 已验证修复
+修复：将 `pyyaml>=6.0.3` 加入 production dependencies。
 
-| Bug | 状态 | 证据 |
-|---|---|---|
-| BUG-006 | 已修复 | change placeholder 已移除，diff 正确报 NOT_IMPLEMENTED |
-| BUG-007 | 已修复 | 错误 enum 不再触发 AttributeError |
-| BUG-008 | 已修复 | 领域错误 isError=true |
-| BUG-010 | 已修复 | 应用版本一致 |
-| BUG-011 | 已修复 | uv sync 开发安装可执行 |
-| BUG-012 | 已修复 | ruff/format 通过 |
-| BUG-013 | 已修复 | 原 Windows 乱码消失 |
-| BUG-015 | 已修复 | 启动提示只出现一次 |
+验证证据：冻结候选 489 项全量通过；Python 3.12.13 干净 wheel 的 YAML/JSON/CLI/env stdio 场景进入 7 passed。
+
+## BUG-017
+
+编号：BUG-017
+
+级别：P0
+
+状态：BLOCKED
+
+问题：真实运行设备的完整 console 命令成功链路尚无证据。
+
+复现步骤：在 HCL GUI 打开目标项目、启动目标 H3C 设备，再调用两条允许命令。
+
+预期：verified endpoint 上成功执行 `display version` 和 `display ip interface brief`，输出脱敏且不串设备。
+
+实际：最新检查时目标项目/设备未运行，只验证了 `DEVICE_NOT_RUNNING` 负向路径。
+
+根因：外部 HCL 运行状态不满足正向测试前提，不是 Server 假阳性。
+
+修复：由维护者启动测试设备；测试工程师只执行 read-only 命令。
+
+验证证据：待补充真实 stdio 调用记录；不得用 fake console 替代本项。
+
+## BUG-018
+
+编号：BUG-018
+
+级别：P1
+
+状态：VERIFIED
+
+问题：并发集成期间 Ruff format gate 曾失败，且当时全量测试后仍有修改。
+
+复现步骤：执行 `uv run --locked ruff format --check .`。
+
+预期：全部文件格式合格，并在冻结候选上运行全量门禁。
+
+实际：最终已格式化；`ruff format --check` 报告 93 个文件全部合格。
+
+根因：多个 beta.2 修复并行集成时尚未执行最终格式化和冻结回归。
+
+修复：Team Lead 运行 formatter，审查 diff，并重跑 ruff check/format、mypy、pytest、build 和 clean-wheel stdio。
+
+验证证据：Ruff check/format 通过、mypy 68 个源文件通过、489 passed、beta.2 build 通过、Python 3.12 wheel stdio 7 passed。
+
+## BUG-019
+
+编号：BUG-019
+
+级别：P1
+
+状态：VERIFIED
+
+问题：`allow_display_prefixes` 和 `deny_patterns` 曾只存在于配置模型，策略引擎没有使用，造成虚假安全保证。
+
+复现步骤：配置只允许 `display version`，再提交 `display interface brief`；或配置拒绝 `brief` 后执行该命令。
+
+预期：自定义规则只能进一步收紧内置安全策略，且拒绝规则优先。
+
+实际：修复前命令仍按内置规则放行；修复后均返回 `COMMAND_NOT_ALLOWED`。
+
+根因：`PolicyEngineImpl` 调用命令校验器时没有传入配置规则。
+
+修复：接入 restriction-only allowlist 和不区分大小写的字面 deny pattern，始终先执行不可覆盖的注入/危险规则。
+
+验证证据：策略单元测试及 489 项冻结候选全量回归通过。
+
+## BUG-020
+
+编号：BUG-020
+
+级别：P1
+
+状态：VERIFIED
+
+问题：Telnet prompt 失败、命令超时或中途 EOF 后连接可能残留，迟到输出可能污染下一次调用；错误还可能携带原始 `buffer_tail`。
+
+复现步骤：fake console 接受连接但不发 prompt，或把第一条命令响应延迟到 timeout 之后，再执行第二条命令。
+
+预期：失败连接必须关闭并不可复用；第二次连接不能读到第一条迟到输出；MCP 错误不能含设备原始数据。
+
+实际：修复后 prompt/EOF/timeout/cancelled 均清理 reader/writer/session，重连成功且无跨调用污染；错误只保留非敏感计数。
+
+根因：连接清理由调用方承担，且 `_collect_output` 曾把 EOF/无 final prompt 当成正常结束。
+
+修复：transport 自身在所有失败路径 fail-closed；EOF 返回 `CONNECTION_CLOSED`，无 prompt 返回 `COMMAND_TIMEOUT`，截断连接不复用；MCP 边界移除未可信输出字段。
+
+验证证据：Telnet fake server 清理、重连、迟到输出和错误边界测试进入 489 项全量通过。
+
+## BUG-021
+
+编号：BUG-021
+
+级别：P1
+
+状态：VERIFIED
+
+问题：未知 Tool、全局 Tool 超时、审计时区比较和拓扑 `config_path` 曾绕过统一协议/隐私边界。
+
+复现步骤：调用不存在的 Tool；运行超过 `max_tool_seconds` 的 Tool；用 `+08:00` 查询 UTC 事件；读取含绝对 `configPath` 的拓扑。
+
+预期：稳定错误码/request_id/单一审计事件；时间按同一时刻比较；不返回本机配置路径；慢文件系统不阻塞 stdio loop。
+
+实际：修复后未知 Tool 为 `INVALID_ARGUMENT`、超时为 `TIMEOUT`，审计统一 UTC，拓扑省略 `config_path`，项目扫描进入 worker thread。
+
+根因：统一边界只处理 Pydantic validation，SQLite 对带偏移 ISO 文本直接排序，Repository 在 async 方法中同步扫描文件。
+
+修复：扩展 ToolManager 边界、UTC 迁移/规范化、公共 topology DTO 脱敏，并用 `asyncio.to_thread` 隔离阻塞文件 I/O。
+
+验证证据：官方内存协议、SQLite、拓扑和全局超时回归进入 489 项全量通过。
+
+## BUG-022
+
+编号：BUG-022
+
+级别：P1
+
+状态：VERIFIED
+
+问题：私钥脱敏仅覆盖完整 RSA/PKCS#8 块，OPENSSH、EC、ENCRYPTED 或被截断且缺少 END 的块可能泄漏。
+
+复现步骤：让设备输出包含上述 PEM label，或让输出上限截断私钥块。
+
+预期：从 BEGIN 到匹配 END 或文本末尾全部替换，不保留 key material。
+
+实际：修复后五种 label 和截断块均整段替换；SNMPv3 usm-user 整行也强制脱敏。
+
+根因：旧正则限定 RSA/普通 PRIVATE KEY 且要求 END，同时通用 key 规则可能先破坏 PEM 标记。
+
+修复：把通用 PEM/OpenSSH 规则置于具体 key 规则之前，覆盖文本结尾，并补 SNMPv3 变体规则。
+
+验证证据：30 项 redaction 测试及 489 项冻结候选全量回归通过。
+
+# 优化建议
+
+1. 把 Python 3.12 clean-wheel + 官方 stdio 7 场景设为 Windows CI required check。
+2. 为真实 HCL 自托管 runner 记录脱敏的 project-bound/console/prompt/command 阶段，不上传厂商资产。
+3. 在 `v0.2` 前决定 Tool alias；若不增加，给外部验收文档提供明确映射表。
+4. 将 `h3c_diff_config` 和 Job placeholder 在 Tool 描述中持续标为不可用，避免 Client 误选。
+5. 发布前生成 SBOM、校验和、干净安装记录，并逐字执行 README/三种客户端示例。
+6. 将真实正向 HCL 测试与设备写测试永久分离；v0.1 CI/验收不得执行配置、save、reboot。
 
 # 优先级
 
-| 优先级 | 活跃 Bug | 发布要求 |
+| 优先级 | 活跃项 | 发布要求 |
 |---|---|---|
-| P0 | BUG-001、BUG-002、BUG-003 | 全部关闭前禁止 beta 发布 |
-| P1 | BUG-004、BUG-005、BUG-009、BUG-014、BUG-016 | beta 前关闭或由维护者接受契约变更 |
+| P0 | BUG-001、BUG-017 | 真实命令成功并完成公开发布授权后才能宣布外部可安装；发布动作本身需维护者确认 |
+| P1 | 无未关闭代码缺陷 | BUG-018～022 已在冻结候选验证 |
+| P2 | BUG-005 | 维护者决策；不阻止 namespaced Tool 的技术验证 |
 
-# 交给 Claude Agent Team 的修复清单
+# 交给开发 Agent 的修复清单
 
-## Agent Team 交付规则
-
-1. 每个 Agent 完成时必须附 `git diff --name-only <base>..HEAD`。
-2. 提交标题声称修复某模块时，diff 必须包含该模块 Owned files。
-3. Lead 不得仅依据 Agent 消息或 unit test 标记完成，必须运行外部黑盒验收。
-4. 所有门禁从全新 clone、干净 uv 环境执行，禁止依赖全局 site-packages。
-5. 共享 `mcp/server.py` 只由 Lead 集成。
-
-## T1：真正完成 HCL Parser（P0）
-
-- 关联：BUG-002。
-- Owned files：project_repository.py、net_parser.py、真实脱敏 fixture、parser tests。
-- 要求：使用实际 `projectInfo.name/path` 和 `deviceInfoList.resource*`；ID 从目录/.net 获取；按 resourceName 合并。
-- 验收：wheel + JSON 配置可发现本机项目并返回正确拓扑。
-
-## T2：重做 Runtime Discovery（P0）
-
-- 关联：BUG-003。
-- 依赖：T1。
-- 要求：candidate 与 verified endpoint 分离；TCP probe；Comware prompt 身份验证；统一 project/device 查询状态。
-- 验收：未监听 30001 不得 operable；真实设备执行两条 display；停止/无端点错误稳定。
-
-## T3：配置和依赖闭环（P1）
-
-- 关联：BUG-004、BUG-016。
-- 要求：PyYAML 正式依赖；默认启动恢复；CLI/env 不依赖配置文件；JSON/YAML/缺失/非法配置黑盒测试。
-- 验收：407+ tests 全绿，干净 wheel 五种启动模式符合 README。
-
-## T4：Validation 和 Audit 官方调用边界（P1）
-
-- 关联：BUG-009、BUG-014。
-- 要求：先写 stdio e2e；单一 request context；validation 也审计；保留真实错误码；outcome 与 policy 分开。
-- 验收：用响应 request_id 查询到对应准确事件，非法 source/count 为结构化 INVALID_ARGUMENT。
-
-## T5：契约和发布（P0/P1）
-
-- 关联：BUG-001、BUG-005。
-- 依赖：T1～T4。
-- 要求：维护者确认 alias 提案；更新 README 状态；发布 TestPyPI/PyPI 和 tag 前请求授权。
-- 验收：全新 Windows 环境逐字执行 README 安装配置，Claude/Cursor 等价 stdio Client 可调用真实设备。
-
-## 最终回归门槛
-
-1. 公开安装 smoke 成功。
-2. 干净环境全部测试通过。
-3. 无配置、CLI、env、JSON、YAML 五种配置路径符合文档。
-4. 真实 HCL 项目和拓扑可发现。
-5. endpoint 必须经过实际探测和 prompt 验证。
-6. 两条真实 display 命令成功。
-7. validation 和 audit request_id 可关联。
-8. 没有修改 HCL 项目或设备配置。
+1. **无待修复的 P1 代码缺陷**：beta.2 实现提交、最终 diff 复核和本地制品验证均已完成。
+2. **真实 HCL 正向测试**：等待维护者启动设备，只执行两条 display 命令并记录脱敏结果。
+3. **发布决策**：正向验证通过后申请公开发布授权；未经授权不 push/tag/Release/PyPI。
+4. **后续契约决策**：Tool alias 继续单独评审，不在 beta.2 候选中临时增加公共 Tool。

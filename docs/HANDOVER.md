@@ -1,140 +1,134 @@
 # HANDOVER — HCL-Lab MCP Server
 
-## 当前版本
+## 当前版本/分支
 
-**v0.1.0-alpha.1** — Read-Only Vertical Slice
+- 候选版本：`0.1.0-beta.2`（未发布）
+- 分支：`codex/beta2-release-candidate`
+- 当前实现提交：`fb5e758`
+- beta.2 集成状态：实现、测试和通用文档已形成本地集成 commit；本文件与测试报告作为后续验证记录提交
+- 日期：2026-07-16
+- 发布状态：未创建 tag、GitHub Release 或 PyPI 包
 
-Previous: v0.0.1 (Repository Bootstrap)
+## 目标 Issue/PR
 
-Branch: `main`
-Date: 2026-07-15
+当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。当前没有可在本文确认的 PR 编号；发布和远端操作需由维护者授权。
 
 ## 完成内容
 
-### Git & 仓库
-- [x] Git 初始化，连接 `https://github.com/FlySun1116/HCL-Lab_mcp.git`
-- [x] 首次提交并推送 `main` 分支
-- [x] `.gitignore`（Python + HCL 专有文件排除 + Secret 防护）
+### HCL 项目解析
 
-### 治理文档
-- [x] `CLAUDE.md` — Claude 会话项目规则
-- [x] `docs/design.md` — 完整架构设计（1121 行，Codex Agent 输出）
-- [x] `README.md` — 项目说明、快速开始、MCP Client 配置示例
-- [x] `LICENSE` — Apache-2.0
-- [x] `NOTICE` — 商标与互操作性声明
-- [x] `SECURITY.md` — 安全模型、风险级别、报告流程
-- [x] `CONTRIBUTING.md` — 开发设置、架构规则、PR 流程
-- [x] `CODE_OF_CONDUCT.md`
-- [x] ADR-0001: Python 3.12 + MCP SDK v1.x
-- [x] ADR-0002: stdio 默认，本地 HCL only
-- [x] ADR-0003: HCL project files + loopback console 边界
-- [x] ADR-0004: Hexagonal Architecture
-- [x] ADR-0005: Read-only + plan/approval 模型
-- [x] ADR-0006: 不实现 HCL 私有协议
+- 支持 HCL 5.10.x `projectInfo` / `deviceInfoList.resource*` 实际 JSON 结构。
+- 支持嵌套 ConfigObj 风格 `.net`，由 `.net` 提供权威 `device_id` 和链路。
+- 按设备名称大小写不敏感合并两种来源，链路去重并输出确定性 warning。
+- 拒绝绝对路径、目录分隔符、`..`、realpath/symlink 项目根目录逃逸。
+- MCP 项目列表和错误不泄漏本机绝对路径。
 
-### 工程骨架
-- [x] `pyproject.toml` — Python 3.12, MCP SDK >=1.28,<2, Pydantic v2
-- [x] 六层目录结构：`domain/`, `ports/`, `application/`, `mcp/`, `adapters/`, `infrastructure/`
-- [x] `__main__.py` — 入口占位
+### Runtime 与 console
 
-### CI/CD
-- [x] `.github/workflows/ci.yml` — lint, typecheck, unit (Linux+Windows), security
-- [x] `.github/CODEOWNERS`
-- [x] `.github/dependabot.yml`
+- 从 HCL 5.10.x 轮转日志按时间顺序归并项目绑定、console 创建/关闭和 alias 重绑定。
+- 任何 HCL 进程存在不再等价于全部设备运行。
+- 端口公式不生成 candidate；只探测明确绑定到目标项目/设备的日志 candidate。
+- candidate 仅允许 loopback，必须通过 TCP/Telnet 和 Comware prompt 探测；不回答登录/密码，不执行探测命令。
+- 项目级和设备级查询使用同一短期 runtime cache。
+- `ProjectAwareRuntimeDiscovery` 在每次查询前注册拓扑，消除 Tool 调用顺序依赖。
+
+### MCP、配置与审计
+
+- 无配置以只读 stdio 默认值启动；显式缺失/损坏配置在协议启动前失败。
+- CLI、嵌套环境变量、JSON、YAML 配置均有官方 stdio 子进程测试。
+- `PyYAML` 已是运行依赖；列表型环境变量支持 JSON。
+- v0.1 只接受 `stdio`、每设备并发固定为 1、transport 首选项必须有效且不重复。
+- `allow_display_prefixes` 只能收紧内置 display allowlist；`deny_patterns` 只增加不区分大小写的字面子串拒绝，均不能覆盖内置注入/危险规则。
+- 官方 `tools/call` Schema 错误规范化为结构化 `INVALID_ARGUMENT`，不泄漏 Pydantic 输入或文档 URL。
+- 未知 Tool 同样返回带 `request_id` 的稳定 `INVALID_ARGUMENT` 并写入审计；所有合法 Tool 受 `server.max_tool_seconds` 全局超时保护。
+- Schema、领域和占位错误在响应与审计中复用同一 `request_id` 和真实错误码。
+- `AuditEvent.outcome` 与 `policy_result` 分离；旧 SQLite 表采用加列迁移，并把旧错误事件与非 UTC 时间戳规范化。
+- `audit.enabled=false` 使用空审计实现，不创建数据库。
+
+### 安全、会话与 Tool
+
+- v0.1 保持 15 个 namespaced Tool；短 alias 尚未注册。
+- `h3c_diff_config` 明确返回 `NOT_IMPLEMENTED`；v0.2 写 Tool 未注册。
+- PC/终端节点不进入 H3C/Comware 设备列表。
+- 所有设备 raw output 在 MCP 边界强制脱敏；`h3c_get_config(redact=false)` 返回 `POLICY_DENIED`。
+- 拓扑响应不暴露 `config_path`；提示符错误不携带设备 buffer；PEM/OpenSSH/EC/ENCRYPTED 及截断私钥块均会整段脱敏。
+- endpoint 携带项目/设备上下文；task-local 会话状态和设备连接锁防止并发串设备。
+- Telnet 连接使用配置的 connection timeout，不再误用 endpoint confidence。
+- connect/prompt/EOF/command-timeout/cancelled 失败都会关闭并失效连接，迟到输出不会污染下一次调用。
+- HCL 文件扫描和拓扑解析在线程中执行，不阻塞 stdio 事件循环；拓扑刷新会删除已从项目移除的旧 runtime 设备。
+- deep health 实际枚举项目，并对首个项目执行 runtime discovery。
 
 ## 修改文件
 
-```
-.gitignore
-.github/CODEOWNERS
-.github/dependabot.yml
-.github/workflows/ci.yml
-CLAUDE.md (已存在，未修改)
-CODE_OF_CONDUCT.md
-CONTRIBUTING.md
-LICENSE
-NOTICE
-README.md
-SECURITY.md
-docs/adr/0001-python-312-mcp-sdk.md
-docs/adr/0002-stdio-local-only.md
-docs/adr/0003-hcl-integration-boundary.md
-docs/adr/0004-hexagonal-architecture.md
-docs/adr/0005-read-only-plan-approval.md
-docs/adr/0006-no-private-hcl-protocol.md
-docs/design.md (已存在，未修改)
-pyproject.toml
-src/h3c_hcl_mcp/__init__.py
-src/h3c_hcl_mcp/__main__.py
-src/h3c_hcl_mcp/domain/__init__.py
-src/h3c_hcl_mcp/ports/__init__.py
-src/h3c_hcl_mcp/application/__init__.py
-src/h3c_hcl_mcp/mcp/__init__.py
-src/h3c_hcl_mcp/adapters/__init__.py
-src/h3c_hcl_mcp/adapters/hcl/__init__.py
-src/h3c_hcl_mcp/adapters/comware/__init__.py
-src/h3c_hcl_mcp/infrastructure/__init__.py
-```
+beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
-## Git Commits
+- `src/h3c_hcl_mcp/adapters/hcl/`
+- `src/h3c_hcl_mcp/adapters/comware/`
+- `src/h3c_hcl_mcp/application/runtime_service.py`
+- `src/h3c_hcl_mcp/domain/audit.py`
+- `src/h3c_hcl_mcp/infrastructure/settings.py`
+- `src/h3c_hcl_mcp/infrastructure/audit/`
+- `src/h3c_hcl_mcp/mcp/`
+- `tests/contract/`、`tests/unit/`、`tests/integration/`、脱敏 fixtures
+- `README.md`、`CHANGELOG.md`、`docs/`、`config/`、`examples/`
+- `pyproject.toml`、`uv.lock`、版本模块
 
-```
-051b144 chore(repo): bootstrap open-source project
-```
+## 关键决策/ADR
 
-## 已执行的测试
+- ADR-0001～0006 继续有效：Python 3.12、stdio、本机项目文件 + loopback console、六边形架构、默认只读、不实现 HCL 私有协议。
+- beta.2 runtime 采取“日志明确绑定 + prompt 验证”；`fallback_telnet_base` 仅保留配置兼容，不产生 endpoint。
+- 15 个 namespaced Tool 是当前公共契约；短 alias 由维护者按 `docs/TOOL_ALIAS_PROPOSAL.md` 决策。
+- v0.1 不开放配置写入、SSH、NETCONF、HTTP 或 HCL lifecycle。
 
-| 检查项 | 状态 |
-|---|---|
-| ruff check | ⬜ 待 CI 运行（本地 ruff 未安装） |
-| ruff format | ⬜ 待 CI 运行 |
-| mypy typecheck | ⬜ 待实现业务代码后生效 |
-| pytest unit | ⬜ 无测试文件 |
-| secret scan | ⬜ 待 CI 运行 |
-| wheel build | ⬜ 待验证 |
+## Git commits
+
+- `fb5e758 fix: complete beta2 runtime and MCP hardening`（beta.2 实现提交）
+- `127acdb fix: BUG-002 real HCL parser + BUG-003 remove false positive + BUG-016 PyYAML`（前一基线）
+
+## 执行的测试与精确结果
+
+以下结果来自冻结后的 beta.2 候选：
+
+| 检查 | 最终结果 | 说明 |
+|---|---|---|
+| `uv sync --locked --extra dev` | 通过 | 锁定 49 个包 |
+| `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
+| `uv run --locked ruff format --check .` | 通过 | 93 个文件格式合格 |
+| `uv run --locked mypy src` | 通过 | 68 个源文件无类型错误 |
+| `uv run --locked pytest` | 通过 | **489 passed in 19.34s**，Python 3.14.5 |
+| `uv build` | 通过 | 生成 `0.1.0b2` wheel 与 sdist；wheel 75 项并包含 `schema.sql` |
+| Python 3.12 干净 wheel | 通过 | Python 3.12.13，安装版本 `0.1.0b2`，官方 stdio **7 passed in 7.43s** |
+| `git diff --check` | 通过 | 无空白错误 |
+
+真实 HCL 5.10.3 通过官方 `ClientSession` 子进程只读验证：发现 1 个项目、6 个设备、5 条链路，仅保留 2 个 S6850 H3C candidate；当时 running `0/6`、30001/30002 均关闭，两条 display 均稳定返回 `DEVICE_NOT_RUNNING`。
 
 ## 未执行的验证
 
-- MCP Inspector 端到端测试（无 MCP Server 实现）
-- Windows 集成测试（无 HCL adapter）
-- 真实 HCL 5.10.x 兼容性（无 Comware adapter）
-- pip/uvx 安装 smoke test
+- 真实 HCL 目标项目处于运行状态时成功执行 `display version`、`display ip interface brief`。
+- TestPyPI/PyPI、GitHub Release、tag 和全新外部用户公开安装测试（尚未授权发布）。
 
-## 已知问题与风险
+## 已知问题和风险
 
-1. 所有模块仅有 `__init__.py` 占位，无业务逻辑
-2. 无测试文件
-3. GitHub 远端尚无 branch protection、Dependabot、Secret scanning 配置
-4. `pyproject.toml` 中 `mcp` 和 `pydantic` 依赖未锁定版本（待 `uv lock`）
+1. 真实 HCL 5.10.3 项目可只读解析，但最新检查时目标项目/设备未运行，runtime 正确返回 0 个 running endpoint；真实命令成功路径仍未验证。
+2. beta.2 本地制品已构建但尚未发布 PyPI；文档和示例必须使用源码虚拟环境，不可宣称 `uvx h3c-hcl-mcp` 已可用。
+3. `h3c_diff_config`、Job 创建、SSH、NETCONF、HTTP 和所有写操作尚未实现。
+4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
 
 ## 下一阶段任务
 
-按 `docs/design.md` 第 11.4 节 Agent 任务图：
-
-| 优先级 | Task | 描述 |
-|---|---|---|
-| 🔴 P0 | T1 Contract | `domain/` + `ports/` 领域模型与契约测试 |
-| 🔴 P0 | T2 MCP | v0.1 只读 Tool Schema 与错误映射 |
-| 🔴 P0 | T3 HCL | 合成项目解析与运行时发现 |
-| 🔴 P0 | T4 Comware | Console transport 与 prompt 状态机 |
-| 🔴 P0 | T5 Policy | 只读策略、审计与脱敏 |
-| 🟡 P1 | T6 Lead | Composition Root 端到端集成 |
-| 🟡 P1 | T7 QA | Windows CI、MCP Inspector、兼容报告 |
-| 🟡 P1 | T8 Security | 独立发布审查 |
-| 🟢 P2 | T9 Release | v0.1.0-alpha.1 Release PR |
+1. 请维护者在 HCL GUI 打开目标项目并启动只读测试设备；只执行两条允许的 display 命令。
+2. beta.2 本地集成 commit、Secret/专有资产复核和制品门禁已完成；正向 HCL 证据通过后更新最终发布报告。
+3. 正向 HCL 证据通过后给出公开发布决策；push、tag、Release、PyPI 仍需维护者授权。
 
 ## 接管所需命令
 
-```bash
-git clone https://github.com/FlySun1116/HCL-Lab_mcp.git
-cd HCL-Lab_mcp
-uv pip install -e ".[dev]"
-ruff check src/ tests/
-ruff format --check src/ tests/
-mypy src/
-pytest
+```powershell
+uv sync --extra dev
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+uv run pytest
+uv build
 ```
 
-## 关键决策记录
-
-见 `docs/adr/0001` ~ `docs/adr/0006`。
+客户端从源码测试时，把 `command` 指向仓库 `.venv\Scripts\h3c-hcl-mcp.exe`，并用 `--projects-dir` 或 `%LOCALAPPDATA%\h3c-hcl-mcp\config.yaml` 指定项目目录。禁止把真实 HCL 文件、日志、配置或凭据复制进仓库。
