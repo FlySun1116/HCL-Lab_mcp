@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   success, validation, timeout, unknown-tool, and error response paths.
 - Added an explicit active-v0.1 line-coverage definition and an 85% CI gate.
 - Added structured Bug, Feature, and Agent Task Issue forms plus a release-oriented PR checklist so a new Agent Team can receive bounded ownership and verification requirements directly from GitHub.
+- Added a reusable distribution archive policy check that rejects local Agent state, credentials, proprietary binaries, links, path traversal, oversized members, and missing license/audit schema files.
 
 ### Fixed
 
@@ -50,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redacted SNMP communities, NTP authentication keys, RADIUS/HWTACACS shared keys, and all supported `super password` role/hash/cipher/simple forms in both full and quick paths.
 - Passed `hcl_list_projects` cursors through to the repository so pagination can advance beyond the first page.
 - Marked device-derived result content as untrusted and removed duplicate raw parser copies from structured results.
+- Redacted Comware `key-string`, WEP key, WLAN `preshared-key`, and IPsec pre-shared-key forms in both full and quick paths.
+- Made Telnet IAC filtering incremental across TCP chunks and rejected non-loopback or non-console endpoints at the transport boundary.
+- Wired global session limits, idle and command-count recycling, and server-shutdown connection cleanup to the existing policy settings.
+- Bounded every public client string field, truncated client-controlled log arguments, and marked HCL project/runtime metadata as untrusted content.
+- Made audit persistence failures fail closed with a stable `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE` reason instead of returning an unaudited success.
+- Excluded `.claude`, `.codex`, `.agents`, caches, virtual environments, and build output from distributions; the source archive no longer includes local Claude settings.
 
 ### Changed
 
@@ -57,12 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The v0.1 public surface remains 15 namespaced tools. Proposed short aliases are not registered; `h3c_diff_config` remains an explicit `NOT_IMPLEMENTED` placeholder.
 - Client configuration examples now launch a source-installed local virtual-environment executable. The package has not yet been published to PyPI, so `uvx h3c-hcl-mcp` is not a supported installation path for this candidate.
 - Upgraded checkout, setup-uv, upload-artifact, and gitleaks Actions to current Node 24 releases and pinned every third-party Action to a reviewed full commit SHA.
+- CI now treats `ResourceWarning` and `PytestUnraisableExceptionWarning` as errors and installs wheel/sdist dependencies only from each artifact's package metadata in clean Python 3.12 environments.
 
 ### Verification status
 
-- Frozen-candidate gates pass: Ruff check/format over 101 files, mypy over 69 source files, and **628 pytest tests** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
-- Active-v0.1 line coverage is **86.83%** (3,646 statements, 480 missed), above the 85% hard gate.
+- Final local-candidate gates pass: Ruff check/format over 102 files, mypy over 69 source files, and **651 pytest tests in 59.87s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **87.19%** (3,762 statements, 482 missed), above the 85% hard gate.
 - `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
+- Distribution policy passes with 76 wheel members and 156 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members.
 - The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
 - Claude Code 2.1.211 reports the stdio Server as connected from an isolated temporary profile; Claude Desktop and Cursor UI smoke tests remain external release checks.
 - Synthetic parser, fake console, MCP protocol, validation, audit, configuration, redaction, timeout, and concurrency paths are automated.

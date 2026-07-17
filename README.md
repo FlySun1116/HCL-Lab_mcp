@@ -44,11 +44,15 @@ will become available only after the maintainer approves a public release.
 ## Install from source
 
 ```powershell
-git clone https://github.com/FlySun1116/HCL-Lab_mcp.git
+git clone --branch codex/beta2-release-candidate --single-branch https://github.com/FlySun1116/HCL-Lab_mcp.git
 cd HCL-Lab_mcp
 uv sync
 uv run h3c-hcl-mcp --version
 ```
+
+Until the beta.2 pull request is merged, a plain clone of remote `main` still
+selects beta.1. Verify that the last command reports `0.1.0-beta.2`; after the
+maintainer merges the candidate, the explicit `--branch` option can be removed.
 
 No configuration file is required. The safe first-run defaults are:
 
@@ -175,8 +179,11 @@ command; at most one empty CRLF is used to request the current prompt.
 - The default policy is read-only.
 - Device commands pass an allowlist and injection checks.
 - Console connections are restricted to loopback.
-- Device output is always treated as untrusted and redacted at the MCP boundary.
+- HCL project/runtime metadata and device output are treated as untrusted and
+  redacted where applicable at the MCP boundary.
 - `redact=false` is rejected in v0.1.
+- Public string inputs are bounded before transport and audit processing.
+- An enabled audit sink fails closed if an invocation cannot be persisted.
 - `server.max_output_chars` bounds device console capture, while
   `server.max_tool_result_bytes` hard-limits every final MCP result in UTF-8 bytes.
 - Every invocation records a request ID, outcome, policy result, duration, and
@@ -194,6 +201,7 @@ uv run ruff format --check .
 uv run mypy src
 uv run pytest -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning --cov=h3c_hcl_mcp --cov-report=term-missing --cov-fail-under=85
 uv build --clear
+uv run python scripts/check_distribution.py dist
 ```
 
 See [docs/design.md](docs/design.md), [CONTRIBUTING.md](CONTRIBUTING.md), and

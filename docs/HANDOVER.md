@@ -4,14 +4,15 @@
 
 - 候选版本：`0.1.0-beta.2`（未发布）
 - 分支：`codex/beta2-release-candidate`
-- 当前实现提交：`56c1ef1`
-- beta.2 集成状态：源码门禁、覆盖率和 wheel/sdist 独立安装验收通过；真实运行 HCL 的两条只读命令和远端发布仍待外部条件/授权
+- 当前实现提交：`183f3f6`
+- 当前证据基线：`183f3f6` + 本文所在文档提交
+- beta.2 集成状态：安全/会话/制品边界修复完成；源码门禁和 wheel/sdist 独立安装已在最终本地候选通过；真实运行 HCL 的两条只读命令正向成功和正式发布仍待外部条件/授权
 - 日期：2026-07-16
 - 发布状态：未创建 tag、GitHub Release 或 PyPI 包
 
 ## 目标 Issue/PR
 
-当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。当前没有可在本文确认的 PR 编号；发布和远端操作需由维护者授权。
+当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。候选 feature 分支已推送，Draft PR 用于收集远端 CI 证据；merge、tag、Release 和 PyPI 仍需维护者授权。
 
 ## 完成内容
 
@@ -29,6 +30,8 @@
 - 任何 HCL 进程存在不再等价于全部设备运行。
 - 端口公式不生成 candidate；只探测明确绑定到目标项目/设备的日志 candidate。
 - candidate 仅允许 loopback，必须通过 TCP/Telnet 和 Comware prompt 探测；不回答登录/密码，不执行探测命令。
+- 配置与 transport 边界双重拒绝非 loopback 地址和非 `console_telnet` endpoint；v0.1 默认不再包含未实现的 SSH。
+- Telnet IAC 解析跨 TCP chunk 保留状态，分片协商不会泄漏到 CLI 输出。
 - 项目级和设备级查询使用同一短期 runtime cache。
 - `ProjectAwareRuntimeDiscovery` 在每次查询前注册拓扑，消除 Tool 调用顺序依赖。
 
@@ -44,6 +47,8 @@
 - Schema、领域和占位错误在响应与审计中复用同一 `request_id` 和真实错误码。
 - `AuditEvent.outcome` 与 `policy_result` 分离；旧 SQLite 表采用加列迁移，并把旧错误事件与非 UTC 时间戳规范化。
 - `audit.enabled=false` 使用空审计实现，不创建数据库。
+- 审计开启时，写入失败会 fail closed，返回稳定 `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE`，不产生未审计成功。
+- 所有公共字符串字段都有长度上限；客户端控制的日志参数在输出前截断。
 
 ### 安全、会话与 Tool
 
@@ -53,6 +58,7 @@
 - 所有设备 raw output 在 MCP 边界强制脱敏；`h3c_get_config(redact=false)` 返回 `POLICY_DENIED`。
 - 拓扑响应不暴露 `config_path`；提示符错误不携带设备 buffer；PEM/OpenSSH/EC/ENCRYPTED 及截断私钥块均会整段脱敏。
 - endpoint 携带项目/设备上下文；task-local 会话状态和设备连接锁防止并发串设备。
+- 全局会话上限、空闲超时、单会话命令次数回收已接入生产 SessionManager；Server lifespan 退出时关闭全部连接。
 - Telnet 连接使用配置的 connection timeout，不再误用 endpoint confidence。
 - connect/prompt/EOF/command-timeout/cancelled 失败都会关闭并失效连接，迟到输出不会污染下一次调用。
 - HCL 文件扫描和拓扑解析在线程中执行，不阻塞 stdio 事件循环；拓扑刷新会删除已从项目移除的旧 runtime 设备。
@@ -61,7 +67,9 @@
 - 最终 MCP `CallToolResult` 按 UTF-8 实际字节数执行硬上限；成功、错误、Schema、未知 Tool 和超时路径均受限，超限返回稳定 `OUTPUT_TOO_LARGE`。
 - 设备结果标记 `content_trust=untrusted_device_output`；结构化 parser 结果不再保留重复 raw 副本。
 - SNMP community、NTP authentication、RADIUS/HWTACACS shared key、`super password` 的 role/hash/cipher/simple 变体均在完整和快速路径强制脱敏。
+- `key-string`、WEP key、WLAN/IPsec `preshared-key`/`pre-shared-key` 变体均在完整和快速路径强制脱敏。
 - project list cursor 已接入 repository 分页；恶意超长 Tool/project 标识在进入审计前受限。
+- HCL 项目、拓扑和 runtime 元数据与设备输出统一标记为不可信外部内容。
 - 进程检查、日志加载移出事件循环；日志观察限制为最多 16 个文件、每文件最多 4 MiB，并显式关闭 SQLite、scandir 和测试 Telnet writer。
 
 ### GitHub 与 Agent 接管
@@ -69,6 +77,8 @@
 - `.github/ISSUE_TEMPLATE/` 提供 Bug、Feature 和 Agent Task 表单；Agent Task 强制记录 owned/forbidden files、依赖、验收证据和交接对象。
 - PR 模板固定架构影响、完整门禁、Secret/专有资产、安全策略、真实设备只读与外部发布动作检查项。
 - CI 的 checkout、setup-uv、upload-artifact、gitleaks 已升级到当前 Node 24 版本，并固定到完整 commit SHA；避免 Node 20 下线和可变 major tag 风险。
+- CI 对 `ResourceWarning`/`PytestUnraisableExceptionWarning` 零容忍；wheel/sdist 在干净 Python 3.12 环境仅依据各自包元数据解析依赖后运行同一 stdio 黑盒测试。
+- `scripts/check_distribution.py` 拒绝本地 Agent 状态、凭据/专有资产、链接、路径穿越、超大成员和缺失的许可证/审计 schema；sdist 不再包含 `.claude/settings.local.json`。
 
 ## 修改文件
 
@@ -84,6 +94,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 - `tests/contract/`、`tests/unit/`、`tests/integration/`、脱敏 fixtures
 - `README.md`、`CHANGELOG.md`、`docs/`、`config/`、`examples/`
 - `.github/ISSUE_TEMPLATE/`、`.github/pull_request_template.md`、`.github/workflows/ci.yml`
+- `.gitignore`、`scripts/check_distribution.py`
 - `pyproject.toml`、`uv.lock`、版本模块
 
 ## 关键决策/ADR
@@ -95,7 +106,13 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## Git commits
 
+- `183f3f6 fix: harden beta2 security and release boundaries`（审计 fail-closed、脱敏、Telnet/session、输入边界与制品策略）
+- `938b96e docs: record Cursor client environment blocker`（Cursor 外部环境阻塞证据）
+- `fbac9ec docs: record Claude Code client smoke`（Claude Code 隔离连接证据）
+- `b19ba0e docs: record CI supply-chain update`（CI 供应链验证文档）
 - `f39ce15 ci: pin current Node 24 actions`（官方当前版本与完整 SHA 供应链固定）
+- `31516d8 docs: align final artifact inventory`（制品清单对齐）
+- `74cb880 docs: finalize beta2 verification report`（冻结候选验证报告）
 - `39ed695 chore: add agent-ready GitHub templates`（Issue forms 与 PR 接管/验收清单）
 - `56c1ef1 fix: complete beta2 release hardening`（诊断、结果预算、脱敏、资源、覆盖率与双制品 CI）
 - `fb5e758 fix: complete beta2 runtime and MCP hardening`（beta.2 实现提交）
@@ -104,20 +121,20 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## 执行的测试与精确结果
 
-以下结果来自冻结后的 beta.2 候选：
+以下结果来自 `183f3f6` 实现与本文档收口后的最终本地候选：
 
 | 检查 | 最终结果 | 说明 |
 |---|---|---|
 | `uv sync --locked --extra dev` | 通过 | 锁定 51 个包 |
 | `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
-| `uv run --locked ruff format --check .` | 通过 | 101 个文件格式合格 |
+| `uv run --locked ruff format --check .` | 通过 | 102 个文件格式合格 |
 | `uv run --locked mypy src` | 通过 | 69 个源文件无类型错误 |
-| 严格 warning + coverage 全量测试 | 通过 | **628 passed in 57.82s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过 | **86.83%**；3,646 statements / 480 missed，门槛 85% |
+| 严格 warning + coverage 全量测试 | 通过 | **651 passed in 59.87s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过 | **87.19%**；3,762 statements / 482 missed，门槛 85% |
 | `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.89s** |
-| Python 3.12 干净 sdist | 通过 | 第二个独立环境安装，版本/console entry point 断言通过，官方 stdio **7 passed in 8.47s** |
-| 制品内容策略 | 通过 | wheel 76 members、sdist 156 members；许可证/schema 存在，无危险扩展名、路径穿越或超大 tracked 文件 |
+| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖；版本/entry point 断言通过，官方 stdio **7 passed in 9.91s** |
+| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖；版本/entry point 断言通过，官方 stdio **7 passed in 9.95s** |
+| 制品内容策略 | 通过 | wheel 76 members、sdist 156 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
 | Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
 | `git diff --check` | 通过 | 无空白错误 |
 
@@ -136,15 +153,15 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 2. beta.2 本地制品已构建但尚未发布 PyPI；文档和示例必须使用源码虚拟环境，不可宣称 `uvx h3c-hcl-mcp` 已可用。
 3. `h3c_diff_config`、Job 创建、SSH、NETCONF、HTTP 和所有写操作尚未实现。
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
-5. GitHub Actions 配置已补齐 wheel/sdist 独立安装门禁，但远端 workflow 和 `main` required-check/branch-protection 状态尚未在本地证明。
-6. GitHub 插件只读复核显示远端 `main` 没有 workflow run/status、仓库没有 PR；本地候选仍未推送。
+5. GitHub Actions 配置已补齐严格 warning、制品策略和 wheel/sdist 元数据独立安装门禁，但远端 workflow 和 `main` required-check/branch-protection 状态尚未在本地证明。
+6. 候选 feature 分支已推送；Draft PR、workflow 结果和 `main` 保护规则证据尚待本轮远端收口。
 7. Claude Code 隔离连接已通过；Claude Desktop 和 Cursor 仍缺真实 UI 级连接记录。Cursor 3.11.25 的隔离 CLI 尝试在进入 MCP 前因自身 Windows `MachineGuid` 查询失败退出，未创建临时 profile、未留下进程，不能归因于 Server。
 
 ## 下一阶段任务
 
 1. 请维护者在 HCL GUI 打开目标项目并启动只读测试设备；只执行两条允许的 display 命令。
-2. beta.2 本地集成 commit、Secret/专有资产复核和双制品门禁完成后，等待正向 HCL 证据再更新最终发布报告。
-3. 正向 HCL 证据通过后给出公开发布决策；push、tag、Release、PyPI 仍需维护者授权。
+2. 推送 `codex/beta2-release-candidate` 并创建 Draft PR，收集远端 Actions 证据；合并仍由维护者决定。
+3. 正向 HCL 证据通过后给出公开发布决策；merge、tag、Release、PyPI 仍需维护者授权。
 
 ## 接管所需命令
 
@@ -155,6 +172,7 @@ uv run ruff format --check .
 uv run mypy src
 uv run pytest -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning --cov=h3c_hcl_mcp --cov-report=term-missing --cov-fail-under=85
 uv build --clear
+uv run python scripts/check_distribution.py dist
 ```
 
 客户端从源码测试时，把 `command` 指向仓库 `.venv\Scripts\h3c-hcl-mcp.exe`，并用 `--projects-dir` 或 `%LOCALAPPDATA%\h3c-hcl-mcp\config.yaml` 指定项目目录。禁止把真实 HCL 文件、日志、配置或凭据复制进仓库。

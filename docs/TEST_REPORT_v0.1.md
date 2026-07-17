@@ -1,7 +1,8 @@
 # HCL-Lab_mcp v0.1 测试报告
 
 > 测试对象：`0.1.0-beta.2` 本地提交候选
-> 实现提交：`56c1ef1`
+> 实现提交：`183f3f6`
+> 证据基线：`183f3f6` + 本报告所在文档提交
 > 报告日期：2026-07-16
 > 当前结论：**CONDITIONAL GO**（代码与本地制品门禁通过；公开发布仍等待真实运行设备正向验证和维护者授权）
 
@@ -38,8 +39,8 @@
 | 显式缺失配置 | 通过 | 退出码 1、stdout 为空、stderr 明确报错 |
 | 显式损坏配置 | 通过 | 在 MCP 协议启动前失败关闭 |
 | beta.2 wheel/sdist | 通过 | `uv build --clear` 仅生成一个 `0.1.0b2` wheel 和一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 独立环境安装；distribution/module/console entry point 版本一致；官方 stdio 7 passed in 8.89s |
-| Python 3.12 干净 sdist | 通过 | 第二个独立环境安装；distribution/module/console entry point 版本一致；官方 stdio 7 passed in 8.47s |
+| Python 3.12 干净 wheel | 通过 | 依据 wheel 元数据解析并安装 33 个依赖；版本/entry point 一致；官方 stdio 7 passed in 9.91s |
+| Python 3.12 干净 sdist | 通过 | 依据 sdist 元数据解析并安装 33 个依赖；版本/entry point 一致；官方 stdio 7 passed in 9.95s |
 | Claude Code 隔离连接 | 通过 | 2.1.211，临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 返回 `Connected`；未调用模型 API |
 | 公共 registry 安装 | 失败/未发布 | PyPI 不存在 beta.2，不能使用 `uvx h3c-hcl-mcp` |
 
@@ -56,10 +57,12 @@
 | validation 隐私 | 通过 | 不含 Pydantic `input_value` 或外部文档 URL |
 | stdout framing | 通过 | 官方客户端可连续解析 JSON-RPC；启动文本位于 stderr |
 | request/audit 关联 | 通过 | Schema 与领域错误的响应、事件使用相同 request_id/错误码 |
+| 审计不可用 | 通过 | 审计开启且持久化失败时 fail closed，返回稳定 `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE` |
 | 未知 Tool | 通过 | 稳定 `INVALID_ARGUMENT`、带 request_id，并写入同一审计事件 |
 | 全局 Tool 超时 | 通过 | `server.max_tool_seconds` 在 ToolManager 边界返回稳定 `TIMEOUT` |
 | 最终输出预算 | 通过 | `CallToolResult` 两个通道按 UTF-8 字节精确计量；所有结果/错误路径受硬上限保护 |
 | 安装制品全 Tool smoke | 通过 | 精确断言 15 个 Tool，全部做最小调用，并查询非空的本轮审计事件 |
+| 公共输入边界 | 通过 | Tool/project/device/command/filter 等客户端字符串均有 Schema 上限，日志参数在输出前截断 |
 
 ## 第三阶段：Tool 功能
 
@@ -108,14 +111,14 @@ beta.2 注册 15 个 Tool：
 | 检查 | 最终结果 |
 |---|---|
 | `uv run --locked ruff check .` | 通过 |
-| `uv run --locked ruff format --check .` | 通过：101 个文件 |
+| `uv run --locked ruff format --check .` | 通过：102 个文件 |
 | `uv run --locked mypy src` | 通过：69 个源文件 |
-| 严格 warning + coverage 全量测试 | 通过：**628 passed in 57.82s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过：**86.83%**；3,646 statements / 480 missed，门槛 85% |
+| 严格 warning + coverage 全量测试 | 通过：**651 passed in 59.87s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过：**87.19%**；3,762 statements / 482 missed，门槛 85% |
 | `uv build --clear` | 通过：唯一 `0.1.0b2` wheel/sdist |
-| Python 3.12 wheel stdio | 通过：独立安装、console entry point、**7 passed in 8.89s** |
-| Python 3.12 sdist stdio | 通过：独立安装、console entry point、**7 passed in 8.47s** |
-| 制品内容策略 | 通过：许可证/schema 存在，无危险扩展名、路径穿越或超大 tracked 文件 |
+| Python 3.12 wheel stdio | 通过：元数据解析 33 个依赖、独立安装、console entry point、**7 passed in 9.91s** |
+| Python 3.12 sdist stdio | 通过：元数据解析 33 个依赖、独立安装、console entry point、**7 passed in 9.95s** |
+| 制品内容策略 | 通过：wheel 76/sdist 156 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接、路径穿越或超大成员 |
 | `git diff --check` | 通过 |
 
 # 成功项
@@ -138,7 +141,7 @@ beta.2 注册 15 个 Tool：
 16. 错误响应与拓扑响应不会泄漏 console buffer、配置路径或本机路径。
 17. PEM/OpenSSH/EC/ENCRYPTED 及截断私钥块、SNMPv3 凭据均有脱敏回归。
 18. HCL 文件扫描在线程中执行，不阻塞 stdio 事件循环；所有合法 Tool 受全局超时保护。
-19. beta.2 wheel/sdist、Python 3.12.13 干净安装和 7 个官方 stdio 场景全部通过。
+19. beta.2 wheel/sdist 仅依据各自包元数据在 Python 3.12.13 干净环境安装，7 个官方 stdio 场景全部通过。
 20. `ping`/`tracert` 具有严格参数模型、诊断分类和结构化结果 parser。
 21. 最终 MCP 返回按真实 UTF-8 字节硬限制，超限结果有稳定错误和审计事件。
 22. SNMP、NTP、RADIUS/HWTACACS、`super password` 等 Comware 凭据语法均覆盖完整/快速脱敏路径。
@@ -147,6 +150,10 @@ beta.2 注册 15 个 Tool：
 25. Bug/Feature/Agent Task Issue 表单与 PR 模板已固化模块所有权、验收证据、安全边界和 Agent 交接要求。
 26. 所有第三方 GitHub Actions 已升级到当前 Node 24 版本并固定完整 commit SHA，避免可变 tag 与 Node 20 下线风险。
 27. Claude Code 2.1.211 使用隔离临时配置真实启动 stdio Server 并报告 `Connected`，没有污染用户配置或产生模型 API 调用。
+28. `key-string`、WEP key、WLAN/IPsec pre-shared-key 已进入完整/快速脱敏回归。
+29. Telnet IAC 分片、loopback/transport 边界、全局会话上限、空闲/命令次数回收和 lifespan 清理已验证。
+30. 审计持久化失败会 fail closed；公共字符串和客户端日志参数有服务端硬边界。
+31. wheel/sdist 成员策略已自动化，sdist 不再包含本地 Claude/Agent 状态。
 
 # 失败项
 
@@ -333,7 +340,7 @@ beta.2 注册 15 个 Tool：
 
 修复：将 `pyyaml>=6.0.3` 加入 production dependencies。
 
-验证证据：冻结候选 628 项全量通过；Python 3.12.13 干净 wheel 与 sdist 的 YAML/JSON/CLI/env stdio 场景均进入 7 passed。
+验证证据：当前候选 651 项全量通过；Python 3.12.13 干净 wheel 与 sdist 的 YAML/JSON/CLI/env stdio 场景均进入 7 passed。
 
 ## BUG-017
 
@@ -371,13 +378,13 @@ beta.2 注册 15 个 Tool：
 
 预期：全部文件格式合格，并在冻结候选上运行全量门禁。
 
-实际：最终已格式化；`ruff format --check` 报告 101 个文件全部合格。
+实际：最终已格式化；`ruff format --check` 报告 102 个文件全部合格。
 
 根因：多个 beta.2 修复并行集成时尚未执行最终格式化和冻结回归。
 
 修复：Team Lead 运行 formatter，审查 diff，并重跑 ruff check/format、mypy、pytest、build 和 wheel/sdist clean-artifact stdio。
 
-验证证据：Ruff check/format 通过、mypy 69 个源文件通过、628 passed、86.83% active-v0.1 coverage、beta.2 clean build 通过，Python 3.12 wheel/sdist stdio 各 7 passed。
+验证证据：Ruff check/format 通过、mypy 69 个源文件通过、651 passed、87.19% active-v0.1 coverage、beta.2 clean build 通过，Python 3.12 wheel/sdist stdio 各 7 passed。
 
 ## BUG-019
 
@@ -399,7 +406,7 @@ beta.2 注册 15 个 Tool：
 
 修复：接入 restriction-only allowlist 和不区分大小写的字面 deny pattern，始终先执行不可覆盖的注入/危险规则。
 
-验证证据：策略单元测试及 628 项冻结候选全量回归通过。
+验证证据：策略单元测试及 651 项候选全量回归通过。
 
 ## BUG-020
 
@@ -421,7 +428,7 @@ beta.2 注册 15 个 Tool：
 
 修复：transport 自身在所有失败路径 fail-closed；EOF 返回 `CONNECTION_CLOSED`，无 prompt 返回 `COMMAND_TIMEOUT`，截断连接不复用；MCP 边界移除未可信输出字段。
 
-验证证据：Telnet fake server 清理、重连、迟到输出、100 并发和错误边界测试进入 628 项全量通过。
+验证证据：Telnet fake server 清理、重连、迟到输出、100 并发和错误边界测试进入 651 项全量通过。
 
 ## BUG-021
 
@@ -443,7 +450,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展 ToolManager 边界、UTC 迁移/规范化、公共 topology DTO 脱敏，并用 `asyncio.to_thread` 隔离阻塞文件 I/O。
 
-验证证据：官方内存协议、SQLite、拓扑、全局超时和最终输出预算回归进入 628 项全量通过。
+验证证据：官方内存协议、SQLite、拓扑、全局超时和最终输出预算回归进入 651 项全量通过。
 
 ## BUG-022
 
@@ -465,7 +472,7 @@ beta.2 注册 15 个 Tool：
 
 修复：把通用 PEM/OpenSSH 规则置于具体 key 规则之前，覆盖文本结尾，并补 SNMPv3 变体规则。
 
-验证证据：55 项 redaction 测试及 628 项冻结候选全量回归通过。
+验证证据：脱敏聚焦测试及 651 项候选全量回归通过。
 
 ## BUG-023
 
@@ -487,7 +494,7 @@ beta.2 注册 15 个 Tool：
 
 修复：新增 ping/traceroute parser，限制 ping count 1～100、tracert max hops 1～255，并拒绝重复/未知/不安全参数。
 
-验证证据：27 项诊断 parser 测试、六个 H3C read Tool 正向链路及 628 项全量回归通过。
+验证证据：诊断 parser 测试、六个 H3C read Tool 正向链路及 651 项全量回归通过。
 
 ## BUG-024
 
@@ -509,7 +516,7 @@ beta.2 注册 15 个 Tool：
 
 修复：使用线程桥接同步发现；限制 16 个日志文件和每文件 4 MiB；补齐连接、扫描器和 writer 清理。
 
-验证证据：100 个同设备 fake-console 并发请求无串线；严格 warning 模式下 628 项通过。
+验证证据：100 个同设备 fake-console 并发请求无串线；严格 warning 模式下 651 项通过。
 
 ## BUG-025
 
@@ -531,7 +538,7 @@ beta.2 注册 15 个 Tool：
 
 修复：新增 final-result budget middleware、紧凑 JSON、受限错误 payload，并把预算放在审计边界内。
 
-验证证据：output-budget 单元/集成测试覆盖成功、错误、未知、Schema 和超时；628 项全量通过。
+验证证据：output-budget 单元/集成测试覆盖成功、错误、未知、Schema 和超时；651 项全量通过。
 
 ## BUG-026
 
@@ -553,7 +560,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展顺序敏感的凭据规则，并为完整/快速路径增加对称回归。
 
-验证证据：55 项 redaction 测试和 628 项全量回归通过。
+验证证据：脱敏聚焦测试和 651 项全量回归通过。
 
 ## BUG-027
 
@@ -575,7 +582,7 @@ beta.2 注册 15 个 Tool：
 
 修复：增加有界 cursor 参数并向下传递。
 
-验证证据：project-list 分页集成测试及 628 项全量回归通过。
+验证证据：project-list 分页集成测试及 651 项全量回归通过。
 
 ## BUG-028
 
@@ -591,7 +598,7 @@ beta.2 注册 15 个 Tool：
 
 预期：完整测试套件进入 active-v0.1 coverage；wheel/sdist 各自独立安装并运行同一 stdio 黑盒套件。
 
-实际：coverage 为 86.83%；两个制品均在 Python 3.12.13 独立环境通过版本、entry point 和 7 个 stdio 场景。
+实际：coverage 为 87.19%；两个制品均在 Python 3.12.13 独立环境依据各自包元数据解析 33 个依赖，通过版本、entry point 和 7 个 stdio 场景。
 
 根因：早期 package smoke 只证明源码模块和 wheel 的部分路径可运行。
 
@@ -635,7 +642,7 @@ beta.2 注册 15 个 Tool：
 
 预期：所有 jobs 通过且 required checks 阻止未通过的合并。
 
-实际：本地完整门禁、CI YAML 解析和双制品 smoke 通过；未获授权执行远端 push/PR，也无法从本地证明 branch protection。
+实际：本地完整门禁、CI YAML 解析和双制品 smoke 通过；候选分支已推送，Draft PR/远端 runner 与 branch protection 证据尚待补齐。
 
 根因：这是远端仓库状态和授权边界，不是本地代码路径。
 
@@ -665,6 +672,94 @@ beta.2 注册 15 个 Tool：
 
 验证证据：CI YAML 和全部 Action SHA 静态校验通过；实际 runner 结果仍纳入 BUG-030。
 
+## BUG-032
+
+编号：BUG-032
+
+级别：P0
+
+状态：VERIFIED
+
+问题：旧 sdist 会把构建机未跟踪的 `.claude/settings.local.json` 打入公开源码包，存在本地设置泄漏和不可复现构建风险。
+
+复现步骤：在仓库存在本地 Claude 设置时构建 sdist，枚举 tar archive members。
+
+预期：发布制品只包含项目所需源码、文档、许可证和审计 schema，不包含任何本地 Agent 状态、凭据或专有资产。
+
+实际：Hatch 显式排除 `.claude`、`.codex`、`.agents`、缓存、虚拟环境和构建目录；最终 sdist 不含本地 Agent 状态。
+
+根因：早期只依赖 Git 跟踪状态和用户全局 ignore，没有为 sdist 建立显式成员策略。
+
+修复：增加仓库级 ignore、Hatch exclude 和 `scripts/check_distribution.py`，检查路径、链接、敏感名称/扩展、大小及必需文件。
+
+验证证据：wheel/sdist 内容策略通过；检查器报告 wheel 76 members、sdist 156 members，且 LICENSE、NOTICE、`schema.sql` 完整。
+
+## BUG-033
+
+编号：BUG-033
+
+级别：P1
+
+状态：VERIFIED
+
+问题：Comware `key-string`、WEP key、WLAN/IPsec `preshared-key`/`pre-shared-key` 语法可绕过旧脱敏规则。
+
+复现步骤：向完整与快速脱敏路径输入上述 plain/simple/cipher、大小写和多空格变体，并检查 MCP 最终结果。
+
+预期：秘密值不能出现在设备结果、结构化内容、日志或审计通道。
+
+实际：规则按敏感命令整行脱敏，完整与快速路径均不保留秘密值。
+
+根因：旧规则只覆盖常见 password/shared-key token，没有覆盖这些 Comware 特有语法。
+
+修复：扩展顺序敏感的凭据模式，并增加完整/快速路径对称测试。
+
+验证证据：新增语法聚焦测试及 651 项全量回归通过。
+
+## BUG-034
+
+编号：BUG-034
+
+级别：P2
+
+状态：VERIFIED
+
+问题：旧 console adapter 未在 transport 边界再次拒绝非 loopback/非 Telnet endpoint，IAC 过滤假设协商序列位于同一 TCP chunk，持久会话策略和 Server 退出清理也未完整接线。
+
+复现步骤：构造非 loopback 或 SSH endpoint、分片 IAC 序列、超过全局连接上限/空闲时间/命令次数的会话，并触发 Server lifespan 退出。
+
+预期：危险 endpoint 在建连前拒绝；IAC 分片正确过滤；会话按策略回收，退出后无残留 writer。
+
+实际：配置与 adapter 双边界强制 console loopback，IAC filter 跨 chunk 保持状态；SessionManager 落实 reservation、空闲/命令回收，lifespan 调用 `close_all()`。
+
+根因：早期约束只存在于 runtime discovery，传输和 composition root 没有完整执行现有 policy 设置。
+
+修复：增加 endpoint 验证、增量 IAC 状态机、连接 reservation、会话计数/时间戳和 lifespan 清理。
+
+验证证据：console/session/server 聚焦测试及 651 项严格 warning 全量回归通过。
+
+## BUG-035
+
+编号：BUG-035
+
+级别：P2
+
+状态：VERIFIED
+
+问题：审计持久化异常被吞掉后 Tool 仍可能返回成功，且多个公共字符串没有长度上限，超长未知 Tool 名可放大日志。
+
+复现步骤：注入始终失败的 AuditSink，调用成功、领域错误、Schema、未知 Tool 和超时路径；提交超长 command/project/tool/filter 字段。
+
+预期：审计开启时不能产生未审计成功；超长输入在设备连接前拒绝；日志不回显完整攻击字符串。
+
+实际：审计失败统一转换为有界 `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE`；公共 Schema 均有 max length，日志参数最多保留 1024 字符。
+
+根因：审计中间件采用可用性优先的异常吞噬策略，Schema 和日志边界未统一设计。
+
+修复：审计路径 fail closed；统一有界字段并在 logging adapter 截断客户端值。
+
+验证证据：审计失败、Schema 上限、输出预算和日志截断测试及 651 项全量回归通过。
+
 # 优化建议
 
 1. 把 Python 3.12 wheel/sdist clean-artifact + 官方 stdio 7 场景设为 Windows CI required check。
@@ -679,13 +774,13 @@ beta.2 注册 15 个 Tool：
 | 优先级 | 活跃项 | 发布要求 |
 |---|---|---|
 | P0 | BUG-001、BUG-017 | 真实命令成功并完成公开发布授权后才能宣布外部可安装；发布动作本身需维护者确认 |
-| P1 | BUG-029、BUG-030（外部验证） | 无未关闭 P1 代码缺陷；真实客户端和远端 CI/保护规则需在发布前补证据 |
+| P1 | BUG-029、BUG-030（外部验证） | BUG-033 已验证；无未关闭 P1 代码缺陷，真实客户端和远端 CI/保护规则需在发布前补证据 |
 | P2 | BUG-005 | 维护者决策；不阻止 namespaced Tool 的技术验证 |
 
 # 交给开发 Agent 的修复清单
 
-1. **无待修复的 P1 代码缺陷**：BUG-018～028 已在当前候选验证；本地实现和双制品门禁通过。
+1. **无待修复的 P1 代码缺陷**：BUG-018～028、BUG-031～035 已在当前候选验证；本地实现和双制品门禁通过。
 2. **真实 HCL 正向测试**：等待维护者启动设备，只执行两条 display 命令并记录脱敏结果。
-3. **发布决策**：正向验证通过后申请公开发布授权；未经授权不 push/tag/Release/PyPI。
+3. **发布决策**：候选分支和 Draft PR 可用于收集 CI 证据；merge/tag/Release/PyPI 仍需维护者明确授权。
 4. **真实客户端与远端 CI**：按 BUG-029/030 补齐 Claude Desktop、Cursor、GitHub Actions 和 main 保护规则证据。
 5. **后续契约决策**：Tool alias 继续单独评审，不在 beta.2 候选中临时增加公共 Tool。
