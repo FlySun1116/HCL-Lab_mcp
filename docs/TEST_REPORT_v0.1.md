@@ -1,10 +1,10 @@
 # HCL-Lab_mcp v0.1 测试报告
 
 > 测试对象：`0.1.0-beta.2` 本地提交候选
-> 实现提交：`183f3f6`
-> 证据基线：`183f3f6` + 本报告所在文档提交
-> 报告日期：2026-07-16
-> 当前结论：**CONDITIONAL GO**（代码与本地制品门禁通过；公开发布仍等待真实运行设备正向验证和维护者授权）
+> 实现/CI 修复提交：`192fc41`
+> 证据基线：`192fc41` + 本报告所在文档提交
+> 报告日期：2026-07-17
+> 当前结论：**CONDITIONAL GO**（代码、本地制品和远端 CI 门禁通过；公开发布仍等待真实运行设备正向验证、客户端 UI 证据和维护者授权）
 
 本报告替代 beta.1 的旧失败快照。所有“已修复”结论均以当前源码、自动化测试或本机只读观察为依据；没有把未运行设备上的命令伪造为成功。仓库尚未发布 PyPI、tag 或 GitHub Release。
 
@@ -113,12 +113,14 @@ beta.2 注册 15 个 Tool：
 | `uv run --locked ruff check .` | 通过 |
 | `uv run --locked ruff format --check .` | 通过：102 个文件 |
 | `uv run --locked mypy src` | 通过：69 个源文件 |
-| 严格 warning + coverage 全量测试 | 通过：**651 passed in 59.87s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过：**87.19%**；3,762 statements / 482 missed，门槛 85% |
+| `uv run --locked mypy --platform linux src` | 通过：Linux typeshed 平台下 69 个源文件 |
+| 严格 warning + coverage 全量测试 | 通过：**651 passed in 61.47s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过：**87.19%**；3,763 statements / 482 missed，门槛 85% |
 | `uv build --clear` | 通过：唯一 `0.1.0b2` wheel/sdist |
 | Python 3.12 wheel stdio | 通过：元数据解析 33 个依赖、独立安装、console entry point、**7 passed in 9.91s** |
 | Python 3.12 sdist stdio | 通过：元数据解析 33 个依赖、独立安装、console entry point、**7 passed in 9.95s** |
 | 制品内容策略 | 通过：wheel 76/sdist 156 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接、路径穿越或超大成员 |
+| GitHub Actions | 通过：[CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 的 6 个 job 全部成功 |
 | `git diff --check` | 通过 |
 
 # 成功项
@@ -154,6 +156,8 @@ beta.2 注册 15 个 Tool：
 29. Telnet IAC 分片、loopback/transport 边界、全局会话上限、空闲/命令次数回收和 lifespan 清理已验证。
 30. 审计持久化失败会 fail closed；公共字符串和客户端日志参数有服务端硬边界。
 31. wheel/sdist 成员策略已自动化，sdist 不再包含本地 Claude/Agent 状态。
+32. [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) 的 Linux quality/contracts/full、Windows full/package 和 secret scan 六项 CI 全部通过。
+33. Linux mypy 平台差异与 gitleaks-action v3 Token 要求已修复，secret scan 已实际执行而非仅静态配置。
 
 # 失败项
 
@@ -162,7 +166,7 @@ beta.2 注册 15 个 Tool：
 3. `h3c_diff_config` 和 Job 生产用例仍是占位能力。
 4. 短 Tool alias 尚未决策/注册，但 namespaced Tool 的 MCP 可发现性已通过。
 5. 尚未在本机真实 Claude Desktop 与 Cursor UI 中记录同一候选的启动证据；Cursor 隔离 CLI 在 MCP 初始化前被自身 Windows MachineGuid 查询阻塞，官方 MCP SDK 与 Claude Code stdio 已通过。
-6. 更新后的 GitHub Actions 尚未由远端 runner 执行，`main` branch protection/required checks 状态也不能从本地证明。
+6. 远端 GitHub Actions 已全部通过，但 `main` 尚未启用 branch protection/required checks，成功检查当前不会强制阻止不合规合并。
 
 # Bug列表
 
@@ -604,7 +608,7 @@ beta.2 注册 15 个 Tool：
 
 修复：CI 使用完整 suite + 85% 门禁，`uv build --clear` 后分别安装 wheel/sdist，清除 `PYTHONPATH` 并从临时 cwd 调用生成的可执行文件。
 
-验证证据：本地双制品黑盒验收通过；CI YAML 静态解析通过，远端 runner 结果见 BUG-030。
+验证证据：本地双制品黑盒验收通过；[CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 的 Windows clean-artifact job 通过。
 
 ## BUG-029
 
@@ -634,21 +638,21 @@ beta.2 注册 15 个 Tool：
 
 级别：P1
 
-状态：BLOCKED
+状态：OPEN
 
-问题：更新后的 GitHub Actions 和 `main` required checks/branch protection 尚无远端证据。
+问题：远端 GitHub Actions 证据和 `main` required checks/branch protection 状态需要验证。
 
 复现步骤：推送 feature 分支并创建 PR，观察 quality/contract/full Windows+Ubuntu/package/security checks；检查 main 规则。
 
 预期：所有 jobs 通过且 required checks 阻止未通过的合并。
 
-实际：本地完整门禁、CI YAML 解析和双制品 smoke 通过；候选分支已推送，Draft PR/远端 runner 与 branch protection 证据尚待补齐。
+实际：[Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) 的 [CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 六个 job 全部通过；GitHub API 对 `main` protection 查询返回 404 `Branch not protected`。
 
-根因：这是远端仓库状态和授权边界，不是本地代码路径。
+根因：远端 workflow 的初次失败由 BUG-036 修复；仓库治理仍未给 `main` 配置保护规则。
 
-修复：获得维护者授权后推送候选分支，运行 Actions 并配置/核对保护规则。
+修复：CI 代码部分已完成；维护者需明确授权后启用 `main` branch protection，并选择 required checks。
 
-验证证据：待远端 workflow URL 与仓库规则截图/查询结果。
+验证证据：PR 与 CI 链接见上；`gh api repos/FlySun1116/HCL-Lab_mcp/branches/main/protection` 返回 404 `Branch not protected`。
 
 ## BUG-031
 
@@ -670,7 +674,7 @@ beta.2 注册 15 个 Tool：
 
 修复：依据官方 release 与远端 Dependabot 证据升级四个 Action；添加静态检查确保所有 `uses:` 引用都是 40 位 SHA。
 
-验证证据：CI YAML 和全部 Action SHA 静态校验通过；实际 runner 结果仍纳入 BUG-030。
+验证证据：CI YAML 和全部 Action SHA 静态校验通过；[CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 六项远端 runner 全部通过。
 
 ## BUG-032
 
@@ -760,6 +764,28 @@ beta.2 注册 15 个 Tool：
 
 验证证据：审计失败、Schema 上限、输出预算和日志截断测试及 651 项全量回归通过。
 
+## BUG-036
+
+编号：BUG-036
+
+级别：P1
+
+状态：VERIFIED
+
+问题：Draft PR 首次 CI 在 Linux mypy 和 gitleaks secret scan 两项失败。
+
+复现步骤：查看 PR #4 的首次 [CI run 29567126042](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567126042)：Linux typeshed 不暴露 `winreg.QueryValueEx`，gitleaks-action v3 因未传 `GITHUB_TOKEN` 在扫描前退出。
+
+预期：同一源码在 Windows/Linux 类型平台均通过；secret scan 实际执行并报告扫描结果。
+
+实际：修复后 [CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 六个 job 全部通过。
+
+根因：Windows 专用 API 在 Linux typeshed 下的可见性不同；gitleaks-action v3 增加了显式 GitHub Token 要求。
+
+修复：通过受控动态属性读取 Windows registry API 并处理 `KeyError`；按 gitleaks-action v3 官方说明给扫描步骤传入仓库 `GITHUB_TOKEN`。
+
+验证证据：默认和 `--platform linux` mypy 均通过，651 项严格 warning 回归通过，第二次远端 CI 六项全绿。
+
 # 优化建议
 
 1. 把 Python 3.12 wheel/sdist clean-artifact + 官方 stdio 7 场景设为 Windows CI required check。
@@ -774,13 +800,13 @@ beta.2 注册 15 个 Tool：
 | 优先级 | 活跃项 | 发布要求 |
 |---|---|---|
 | P0 | BUG-001、BUG-017 | 真实命令成功并完成公开发布授权后才能宣布外部可安装；发布动作本身需维护者确认 |
-| P1 | BUG-029、BUG-030（外部验证） | BUG-033 已验证；无未关闭 P1 代码缺陷，真实客户端和远端 CI/保护规则需在发布前补证据 |
+| P1 | BUG-029、BUG-030（仅剩仓库治理） | BUG-033、BUG-036 已验证；无未关闭 P1 代码缺陷，真实客户端和 `main` 保护规则需在发布前补证据 |
 | P2 | BUG-005 | 维护者决策；不阻止 namespaced Tool 的技术验证 |
 
 # 交给开发 Agent 的修复清单
 
-1. **无待修复的 P1 代码缺陷**：BUG-018～028、BUG-031～035 已在当前候选验证；本地实现和双制品门禁通过。
+1. **无待修复的 P1 代码缺陷**：BUG-018～028、BUG-031～036 已在当前候选验证；本地实现、双制品和六项远端 CI 门禁通过。
 2. **真实 HCL 正向测试**：等待维护者启动设备，只执行两条 display 命令并记录脱敏结果。
-3. **发布决策**：候选分支和 Draft PR 可用于收集 CI 证据；merge/tag/Release/PyPI 仍需维护者明确授权。
-4. **真实客户端与远端 CI**：按 BUG-029/030 补齐 Claude Desktop、Cursor、GitHub Actions 和 main 保护规则证据。
+3. **发布决策**：候选分支和 Draft PR #4 已通过 CI；merge/tag/Release/PyPI 仍需维护者明确授权。
+4. **真实客户端与仓库治理**：按 BUG-029/030 补齐 Claude Desktop、Cursor 和 `main` 保护规则证据。
 5. **后续契约决策**：Tool alias 继续单独评审，不在 beta.2 候选中临时增加公共 Tool。

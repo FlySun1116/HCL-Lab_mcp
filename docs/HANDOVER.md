@@ -4,15 +4,15 @@
 
 - 候选版本：`0.1.0-beta.2`（未发布）
 - 分支：`codex/beta2-release-candidate`
-- 当前实现提交：`183f3f6`
-- 当前证据基线：`183f3f6` + 本文所在文档提交
-- beta.2 集成状态：安全/会话/制品边界修复完成；源码门禁和 wheel/sdist 独立安装已在最终本地候选通过；真实运行 HCL 的两条只读命令正向成功和正式发布仍待外部条件/授权
-- 日期：2026-07-16
+- 当前实现/CI 修复提交：`192fc41`
+- 当前证据基线：`192fc41` + 本文所在文档提交
+- beta.2 集成状态：安全/会话/制品边界修复完成；源码、双制品和 Draft PR 六项远端 CI 门禁全部通过；真实运行 HCL 的两条只读命令正向成功、`main` 保护规则和正式发布仍待外部条件/授权
+- 日期：2026-07-17
 - 发布状态：未创建 tag、GitHub Release 或 PyPI 包
 
 ## 目标 Issue/PR
 
-当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。候选 feature 分支已推送，Draft PR 用于收集远端 CI 证据；merge、tag、Release 和 PyPI 仍需维护者授权。
+当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。候选 feature 分支已推送到 [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4)，六项远端 CI 已全部通过；merge、tag、Release、PyPI 和仓库保护规则变更仍需维护者授权。
 
 ## 完成内容
 
@@ -106,6 +106,8 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## Git commits
 
+- `192fc41 ci: fix Linux typecheck and gitleaks token`（Linux mypy 跨平台兼容与 gitleaks v3 实际执行）
+- `61ba9d9 docs: finalize beta2 security verification`（beta.2 安全验证文档）
 - `183f3f6 fix: harden beta2 security and release boundaries`（审计 fail-closed、脱敏、Telnet/session、输入边界与制品策略）
 - `938b96e docs: record Cursor client environment blocker`（Cursor 外部环境阻塞证据）
 - `fbac9ec docs: record Claude Code client smoke`（Claude Code 隔离连接证据）
@@ -121,7 +123,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## 执行的测试与精确结果
 
-以下结果来自 `183f3f6` 实现与本文档收口后的最终本地候选：
+以下结果来自 `192fc41` 实现、本文档收口后的最终本地候选和 Draft PR #4：
 
 | 检查 | 最终结果 | 说明 |
 |---|---|---|
@@ -129,13 +131,15 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 | `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
 | `uv run --locked ruff format --check .` | 通过 | 102 个文件格式合格 |
 | `uv run --locked mypy src` | 通过 | 69 个源文件无类型错误 |
-| 严格 warning + coverage 全量测试 | 通过 | **651 passed in 59.87s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过 | **87.19%**；3,762 statements / 482 missed，门槛 85% |
+| `uv run --locked mypy --platform linux src` | 通过 | Linux typeshed 平台下 69 个源文件无类型错误 |
+| 严格 warning + coverage 全量测试 | 通过 | **651 passed in 61.47s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过 | **87.19%**；3,763 statements / 482 missed，门槛 85% |
 | `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
 | Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖；版本/entry point 断言通过，官方 stdio **7 passed in 9.91s** |
 | Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖；版本/entry point 断言通过，官方 stdio **7 passed in 9.95s** |
 | 制品内容策略 | 通过 | wheel 76 members、sdist 156 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
 | Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
+| GitHub Actions | 通过 | [CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 的 Linux quality/contracts/full、Windows full/package 和 secret scan 共 6 项全部通过 |
 | `git diff --check` | 通过 | 无空白错误 |
 
 制品 stdio 场景在仓库外工作目录运行并清除 `PYTHONPATH`，精确断言 15 个 Tool、对全部公开 Tool 做最小调用，并验证本轮审计事件的非空过滤查询。
@@ -153,15 +157,16 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 2. beta.2 本地制品已构建但尚未发布 PyPI；文档和示例必须使用源码虚拟环境，不可宣称 `uvx h3c-hcl-mcp` 已可用。
 3. `h3c_diff_config`、Job 创建、SSH、NETCONF、HTTP 和所有写操作尚未实现。
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
-5. GitHub Actions 配置已补齐严格 warning、制品策略和 wheel/sdist 元数据独立安装门禁，但远端 workflow 和 `main` required-check/branch-protection 状态尚未在本地证明。
-6. 候选 feature 分支已推送；Draft PR、workflow 结果和 `main` 保护规则证据尚待本轮远端收口。
+5. Draft PR #4 的六项 GitHub Actions 已全部通过；但 GitHub API 对 `main` protection 查询返回 404 `Branch not protected`，当前成功检查不会被 required checks 强制执行。
+6. 候选 feature 分支和 Draft PR 均已就绪；启用 `main` 分支保护属于仓库治理变更，需维护者明确授权。
 7. Claude Code 隔离连接已通过；Claude Desktop 和 Cursor 仍缺真实 UI 级连接记录。Cursor 3.11.25 的隔离 CLI 尝试在进入 MCP 前因自身 Windows `MachineGuid` 查询失败退出，未创建临时 profile、未留下进程，不能归因于 Server。
 
 ## 下一阶段任务
 
 1. 请维护者在 HCL GUI 打开目标项目并启动只读测试设备；只执行两条允许的 display 命令。
-2. 推送 `codex/beta2-release-candidate` 并创建 Draft PR，收集远端 Actions 证据；合并仍由维护者决定。
-3. 正向 HCL 证据通过后给出公开发布决策；merge、tag、Release、PyPI 仍需维护者授权。
+2. 请维护者决定是否为 `main` 启用 branch protection，并把六项 CI 中的发布门禁设为 required checks。
+3. 在 Claude Desktop 与 Cursor GUI 各完成一次 15-Tool 发现和 `server_health` 调用记录。
+4. 正向 HCL 和客户端证据通过后给出公开发布决策；merge、tag、Release、PyPI 仍需维护者授权。
 
 ## 接管所需命令
 

@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded every public client string field, truncated client-controlled log arguments, and marked HCL project/runtime metadata as untrusted content.
 - Made audit persistence failures fail closed with a stable `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE` reason instead of returning an unaudited success.
 - Excluded `.claude`, `.codex`, `.agents`, caches, virtual environments, and build output from distributions; the source archive no longer includes local Claude settings.
+- Made the Windows registry lookup type-safe under both Windows and Linux mypy platforms.
+- Passed the repository `GITHUB_TOKEN` to gitleaks-action v3 so the pinned secret-scan job can run on pull requests.
 
 ### Changed
 
@@ -68,8 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verification status
 
-- Final local-candidate gates pass: Ruff check/format over 102 files, mypy over 69 source files, and **651 pytest tests in 59.87s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
-- Active-v0.1 line coverage is **87.19%** (3,762 statements, 482 missed), above the 85% hard gate.
+- Final local-candidate gates pass: Ruff check/format over 102 files, mypy over 69 source files, and **651 pytest tests in 61.47s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **87.19%** (3,763 statements, 482 missed), above the 85% hard gate.
+- [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) is open and clean; all six jobs in [CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) pass. The repository still has no protection rule on `main`, so these checks are not yet enforced as required checks.
 - `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
 - Distribution policy passes with 76 wheel members and 156 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members.
 - The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
