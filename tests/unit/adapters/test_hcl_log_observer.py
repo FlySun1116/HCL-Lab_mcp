@@ -305,7 +305,7 @@ class TestLogObserver:
         assert observer.get_project_endpoint("hcl_alpha", 1) is None
         assert observer.is_device_closed("hcl_alpha", 1)
 
-    def test_load_files_preserves_binding_and_current_event_from_bounded_snapshot(self, tmp_path):
+    def test_load_files_does_not_correlate_binding_across_bounded_snapshot_gap(self, tmp_path):
         log_file = tmp_path / "HCL.log"
         binding = (
             "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
@@ -322,9 +322,69 @@ class TestLogObserver:
         observer = LogObserver()
         observer.load_files([str(log_file)], max_bytes_per_file=1024)
 
-        endpoint = observer.get_project_endpoint("hcl_alpha", 1)
+        assert observer.get_project_endpoint("hcl_alpha", 1) is None
+
+    def test_load_files_accepts_explicit_rebinding_in_contiguous_tail(self, tmp_path):
+        log_file = tmp_path / "HCL.log"
+        old_binding = (
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_old\hcl_old.net"
+            "\n"
+        )
+        new_binding = (
+            "2026-07-14 23:12:00,001 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_new\hcl_new.net"
+            "\n"
+        )
+        created = (
+            "2026-07-14 23:12:01,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30009)"
+            "\n"
+        )
+        log_file.write_bytes(
+            old_binding.encode() + (b"X" * 8192) + b"\n" + new_binding.encode() + created.encode()
+        )
+
+        observer = LogObserver()
+        observer.load_files([str(log_file)], max_bytes_per_file=1024)
+
+        assert observer.get_project_endpoint("hcl_old", 1) is None
+        endpoint = observer.get_project_endpoint("hcl_new", 1)
         assert endpoint is not None
-        assert endpoint.port == 30001
+        assert endpoint.port == 30009
+
+    def test_bounded_snapshot_gap_invalidates_all_prior_state(self, tmp_path):
+        older_file = tmp_path / "HCL.log.1"
+        current_file = tmp_path / "HCL.log"
+        older_file.write_text(
+            "2026-07-14 23:10:00 Device old (id=8) started, console port: 5008\n"
+            "2026-07-14 23:10:01 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_old\hcl_old.net"
+            "\n"
+            "2026-07-14 23:10:01,500 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device7, telnet_port:30007)"
+            "\n"
+            "2026-07-14 23:10:02 - HCL topo1 -  INFO: close telnet_server "
+            r"strPipeName:\\.\pipe\topo1-device9, telnet_port:30009)"
+            "\n",
+            encoding="utf-8",
+        )
+        current_file.write_bytes(
+            b"untrusted-prefix\n" + (b"X" * 8192) + b"\n"
+            b"2026-07-14 23:12:00 - HCL topo1 -  INFO: create_telnet_server success "
+            b"strPipeName:\\\\.\\pipe\\topo1-device10, telnet_port:30010)\n"
+        )
+
+        observer = LogObserver()
+        observer.load_files(
+            [str(older_file), str(current_file)],
+            max_bytes_per_file=1024,
+        )
+
+        assert observer.get_endpoint(8) is None
+        assert observer.get_project_endpoint("hcl_old", 7) is None
+        assert not observer.is_device_closed("hcl_old", 9)
+        assert observer.get_endpoint(10) is None
 
     def test_load_files_limits_rotated_file_count(self, tmp_path):
         paths = []

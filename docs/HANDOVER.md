@@ -30,6 +30,7 @@
 - 任何 HCL 进程存在不再等价于全部设备运行。
 - 端口公式不生成 candidate；只探测明确绑定到目标项目/设备的日志 candidate。
 - candidate 仅允许 loopback，必须通过 TCP/Telnet 和 Comware prompt 探测；不回答登录/密码，不执行探测命令。
+- 超限日志仅读取连续尾部并插入状态信任边界；旧 alias/project/endpoint/closed/legacy 状态全部失效，tail 中没有新明确绑定就不产生 endpoint。
 - 配置与 transport 边界双重拒绝非 loopback 地址和非 `console_telnet` endpoint；v0.1 默认不再包含未实现的 SSH。
 - Telnet IAC 解析跨 TCP chunk 保留状态，分片协商不会泄漏到 CLI 输出。
 - 项目级和设备级查询使用同一短期 runtime cache。
@@ -64,6 +65,7 @@
 - 全局会话上限、空闲超时、单会话命令次数回收已接入生产 SessionManager；Server lifespan 退出时关闭全部连接。
 - Telnet 连接使用配置的 connection timeout，不再误用 endpoint confidence。
 - connect/prompt/EOF/command-timeout/cancelled 失败都会关闭并失效连接，迟到输出不会污染下一次调用。
+- 命令完成 prompt 必须是独立终行并与连接时捕获值完全一致；正文中的 `<fake>`/`[fake]` 不会截断响应或串入下一命令。
 - HCL 文件扫描和拓扑解析在线程中执行，不阻塞 stdio 事件循环；拓扑刷新会删除已从项目移除的旧 runtime 设备。
 - deep health 实际枚举项目，并对首个项目执行 runtime discovery。
 - `h3c_ping`/`h3c_trace_route` 使用严格的目标、次数和最大跳数 Schema，并输出结构化诊断摘要。
@@ -74,6 +76,7 @@
 - project list cursor 已接入 repository 分页；恶意超长 Tool/project 标识在进入审计前受限。
 - HCL 项目、拓扑和 runtime 元数据与设备输出统一标记为不可信外部内容。
 - 进程检查、日志加载移出事件循环；日志观察限制为最多 16 个文件、每文件最多 4 MiB，并显式关闭 SQLite、scandir 和测试 Telnet writer。
+- 统一日志边界覆盖紧凑 `label:/path`，并把 CR/LF、ANSI/终端控制符与 Unicode 行分隔符转为可见转义，阻止伪造日志记录。
 
 ### GitHub 与 Agent 接管
 
@@ -140,13 +143,13 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 | `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
 | `uv run --locked ruff format --check .` | 通过 | 110 个文件格式合格 |
 | `uv run --locked mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py` | 通过 | 73 个源/脚本文件无类型错误 |
-| 严格 warning + coverage 全量测试 | 通过 | **745 passed、3 skipped in 59.83s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过 | **87.38%**；3,874 statements / 489 missed，门槛 85% |
+| 严格 warning + coverage 全量测试 | 通过 | **758 passed、3 skipped in 59.22s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过 | **87.55%**；3,904 statements / 486 missed，门槛 85% |
 | 文档/结构化示例 | 通过 | 29 个 Markdown、24 个内部链接、10 个 JSON/YAML 示例；workflow Action 均固定 40 位 SHA |
 | 依赖/许可证 | 通过 | `pip-audit` 无已知漏洞；GPL/AGPL deny gate 通过 |
 | `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 7.18s** |
-| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 7.22s** |
+| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 8.67s** |
+| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 8.48s** |
 | 制品内容策略 | 通过 | wheel 77 members、sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
 | Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
 | GitHub Actions | 条件通过 | CI run `29597839925`、docs run `29597840557` 及 security run `29597839864` 的代码侧检查通过；唯一失败 Dependency Review 因 Dependency Graph disabled |

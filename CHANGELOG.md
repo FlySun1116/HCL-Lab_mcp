@@ -47,9 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Filtered HCL PC/terminal nodes from H3C device results and applied mandatory sensitive-output redaction at the MCP boundary; `redact=false` now fails with `POLICY_DENIED`.
 - Covered complete and truncated PKCS#8/RSA/EC/OpenSSH/encrypted private-key blocks and SNMPv3 credentials in mandatory redaction.
 - Closed and invalidated Telnet sessions after prompt failure, EOF, cancellation, truncation, or command timeout so late bytes cannot contaminate a later request.
+- Required Comware prompts to be independent final lines and to match the prompt captured for the read-only session, preventing prompt-like device output from truncating one command and contaminating the next.
 - Moved project scanning/topology parsing off the stdio event loop and reconciled deleted topology devices from cached runtime state.
 - Made deep health checks inspect configured projects and real runtime discovery instead of reporting an unconditional dependency result.
 - Moved process inspection and bounded log loading off the stdio event loop, closed SQLite/scandir/Telnet resources explicitly, and limited log observation to 16 files and 4 MiB per file.
+- Treated every skipped region in an oversized HCL log as a state trust boundary; endpoints now require a fresh project binding in the retained continuous tail instead of correlating console events across unread bytes.
 - Classified `ping` and `tracert` as diagnostic operations and parsed their summaries instead of returning ambiguous raw-only data.
 - Redacted SNMP communities, NTP authentication keys, RADIUS/HWTACACS shared keys, and all supported `super password` role/hash/cipher/simple forms in both full and quick paths.
 - Passed `hcl_list_projects` cursors through to the repository so pagination can advance beyond the first page.
@@ -68,6 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforced `audit.retention_days` in SQLite initialization/appends and bounded/redacted human and JSON exception logging.
 - Replaced FastMCP ToolManager mutation with public registration/call/list extension points; the sole private server-version bridge is isolated behind an MCP 1.28.x compatibility guard.
 - Removed absolute audit/secret/project paths and raw exception text from production log arguments; human and JSON logging now redact Windows, UNC, generic POSIX paths, credentials, and bounded tracebacks while preserving HTTPS URLs.
+- Closed compact `label:/absolute/path` redaction gaps and escaped CR/LF, terminal controls, and Unicode line separators before formatting human or JSON logs.
 
 ### Changed
 
@@ -80,11 +83,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verification status
 
-- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **745 passed, 3 skipped in 59.83s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
-- Active-v0.1 line coverage is **87.38%** (3,874 statements, 489 missed), above the 85% hard gate.
+- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **758 passed, 3 skipped in 59.22s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **87.55%** (3,904 statements, 486 missed), above the 85% hard gate.
 - [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) remains the integration target. Latest CI, documentation, artifact security, license, secret-scan, and CodeQL checks pass; only Dependency Review fails because the repository Dependency Graph setting is disabled. The repository also has no protection rule on `main`, so successful checks are not yet enforced as required checks.
 - `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
-- Distribution policy passes with 77 wheel members and 174 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members. SHA-256: wheel `A666C36E5ACB66EBF8ED8584C4A52BBA5A4A6C8DDEBD3CF52B0BDFDC7FA6936F`; sdist `4F25C61BC9E327E7C74D5E7375107115512B41387E92B88B580BFE55AD976822`.
+- Distribution policy passes with 77 wheel members and 174 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members. Final tag checksums are generated as external release assets instead of being embedded into the self-referential source archive.
 - Locked dependency consistency, runtime vulnerability audit, incompatible-license gate, documentation/examples validation, and SBOM generation all pass locally.
 - The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
 - Claude Code 2.1.211 reports the stdio Server as connected from an isolated temporary profile; Claude Desktop and Cursor UI smoke tests remain external release checks.

@@ -17,7 +17,6 @@ from h3c_hcl_mcp.domain.device import DiscoverySource, RuntimeEndpoint, Transpor
 
 _DEFAULT_MAX_LOG_FILES = 16
 _DEFAULT_MAX_LOG_BYTES_PER_FILE = 4 * 1024 * 1024
-_LOG_HEAD_BYTES = 64 * 1024
 
 
 class LogEventType(StrEnum):
@@ -27,6 +26,9 @@ class LogEventType(StrEnum):
     PROJECT_BOUND = "project_bound"
     CONSOLE_CREATED = "console_created"
     CONSOLE_CLOSED = "console_closed"
+
+    # Internal trust boundary emitted when a bounded read skips log bytes.
+    SNAPSHOT_GAP = "snapshot_gap"
 
     # Backward-compatible synthetic events used by existing fixtures.
     DEVICE_STARTED = "device_started"
@@ -225,6 +227,19 @@ def _reconstruct_state(events: list[LogEvent]) -> _ObservedState:
     stopped_legacy: set[int] = set()
 
     for event in events:
+        if event.event_type == LogEventType.SNAPSHOT_GAP:
+            # Bytes omitted from an oversized log can contain arbitrary
+            # rebind/close/start events.  No state reconstructed before that
+            # gap is trustworthy in the continuous tail window.
+            state.project_endpoints.clear()
+            state.closed_devices.clear()
+            state.legacy_endpoints.clear()
+            alias_to_project.clear()
+            active_by_alias.clear()
+            allocated_legacy.clear()
+            stopped_legacy.clear()
+            continue
+
         if event.event_type == LogEventType.PROJECT_BOUND:
             if event.topology_alias is None or event.project_id is None:
                 continue
@@ -315,28 +330,28 @@ def extract_endpoints_from_events(
     return {device_id: [endpoint] for device_id, endpoint in merged.items()}
 
 
-def _read_bounded_log_lines(path: Path, max_bytes: int) -> list[str]:
-    """Read a bounded head/tail snapshot without retaining partial lines."""
+def _read_bounded_log_lines(path: Path, max_bytes: int) -> tuple[list[str], bool]:
+    """Read a bounded continuous snapshot and report whether bytes were skipped.
+
+    For an oversized file only the tail is returned.  Combining a head binding
+    with tail console events across unread bytes is unsafe because the gap may
+    contain an alias rebind.  The caller inserts an explicit state barrier
+    before parsing the tail.
+    """
     with path.open("rb") as log_file:
         size = log_file.seek(0, 2)
         log_file.seek(0)
         if size <= max_bytes:
             payload = log_file.read(max_bytes)
+            truncated = False
         else:
-            head_budget = min(_LOG_HEAD_BYTES, max_bytes // 4)
-            tail_budget = max_bytes - head_budget
-
-            head = log_file.read(head_budget)
-            last_head_newline = max(head.rfind(b"\n"), head.rfind(b"\r"))
-            head = head[: last_head_newline + 1] if last_head_newline >= 0 else b""
-
-            log_file.seek(size - tail_budget)
-            tail = log_file.read(tail_budget)
+            log_file.seek(size - max_bytes)
+            tail = log_file.read(max_bytes)
             first_tail_newline = tail.find(b"\n")
-            tail = tail[first_tail_newline + 1 :] if first_tail_newline >= 0 else b""
-            payload = head + tail
+            payload = tail[first_tail_newline + 1 :] if first_tail_newline >= 0 else b""
+            truncated = True
 
-    return payload.decode("utf-8", errors="replace").splitlines()
+    return payload.decode("utf-8", errors="replace").splitlines(), truncated
 
 
 class LogObserver:
@@ -371,9 +386,10 @@ class LogObserver:
         File names and modification times are not reliable rotation order in
         HCL 5.10.x, so timestamps embedded in recognized lines are authoritative.
         Unreadable files are ignored and never create endpoints. Resource use
-        is bounded by reading at most ``max_files`` and a head/tail window from
-        each file; the head preserves initial project binding while the tail
-        captures the current console state.
+        is bounded by reading at most ``max_files`` and a continuous tail
+        window from each oversized file.  A skipped region is a trust boundary:
+        state before it is discarded, and real endpoints require an explicit
+        project binding in the retained tail.
         """
         indexed_events: list[tuple[int, LogEvent]] = []
         sequence = 0
@@ -390,10 +406,21 @@ class LogObserver:
         selected = sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True)[: max(1, max_files)]
         for _, _, path in selected:
             try:
-                lines = _read_bounded_log_lines(path, max(256, max_bytes_per_file))
+                lines, truncated = _read_bounded_log_lines(path, max(256, max_bytes_per_file))
             except OSError:
                 continue
-            for event in parse_log_lines(lines):
+            parsed_events = parse_log_lines(lines)
+            if truncated:
+                timestamps = [event.timestamp for event in parsed_events if event.timestamp is not None]
+                gap_timestamp = min(timestamps) if timestamps else datetime.max.replace(tzinfo=UTC)
+                indexed_events.append(
+                    (
+                        sequence,
+                        LogEvent(event_type=LogEventType.SNAPSHOT_GAP, timestamp=gap_timestamp),
+                    )
+                )
+                sequence += 1
+            for event in parsed_events:
                 indexed_events.append((sequence, event))
                 sequence += 1
 

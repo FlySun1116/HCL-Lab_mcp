@@ -34,8 +34,9 @@ _WINDOWS_ABSOLUTE_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 _POSIX_ABSOLUTE_PATH_RE = re.compile(
-    r"""(?<![A-Za-z0-9_:/])/(?!/)[^\s"'<>|]+""",
+    r"""(?<![A-Za-z0-9_/])/(?!/)[^\s"'<>|]+""",
 )
+_LOG_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
 def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
@@ -152,14 +153,28 @@ def _bounded_exception_text(value: str) -> str:
 
 
 def _sanitize_log_text(value: str) -> str:
-    """Remove credentials and absolute host paths from log text."""
+    """Remove credentials, host paths, and log-forging controls."""
 
     redacted = redact_sensitive(value)
     redacted = _QUOTED_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
     redacted = _FILE_URI_PATH_RE.sub(f"file://{_LOCAL_PATH_MARKER}", redacted)
     redacted = _FORWARD_UNC_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
     redacted = _WINDOWS_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
-    return _POSIX_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    redacted = _POSIX_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    return _LOG_CONTROL_RE.sub(_escape_log_control, redacted)
+
+
+def _escape_log_control(match: re.Match[str]) -> str:
+    """Render line-breaking and terminal control characters visibly."""
+
+    value = match.group(0)
+    named = {"\r": r"\r", "\n": r"\n", "\t": r"\t"}
+    if value in named:
+        return named[value]
+    codepoint = ord(value)
+    if codepoint <= 0xFF:
+        return f"\\x{codepoint:02x}"
+    return f"\\u{codepoint:04x}"
 
 
 def get_logger(name: str) -> logging.Logger:

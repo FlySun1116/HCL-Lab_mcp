@@ -231,6 +231,51 @@ def test_setup_logging_preserves_https_urls(
 
 
 @pytest.mark.parametrize("format_json", [False, True])
+def test_setup_logging_redacts_compact_labelled_posix_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    format_json: bool,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO", format_json=format_json)
+
+    logging.getLogger("tests.compact-paths").warning(
+        "path:/home/example/private.db config:/etc/hcl/private.yaml error at:/usr/local/private/key"
+    )
+
+    output = stream.getvalue()
+    assert "/home/example" not in output
+    assert "/etc/hcl" not in output
+    assert "/usr/local/private" not in output
+    assert output.count("<local-path>") >= 3
+
+
+@pytest.mark.parametrize("format_json", [False, True])
+def test_setup_logging_escapes_line_and_terminal_control_characters(
+    monkeypatch: pytest.MonkeyPatch,
+    format_json: bool,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO", format_json=format_json)
+
+    logging.getLogger("tests.log-controls").error(
+        "failed target=%s",
+        "device-1\nFORGED level=CRITICAL\r\t\x1b[31m\x9b32m\u2028NEXT",
+    )
+
+    output = stream.getvalue()
+    rendered = output
+    if format_json:
+        entries = [json.loads(line) for line in output.splitlines()]
+        rendered = next(entry["message"] for entry in entries if entry["logger"] == "tests.log-controls")
+    assert "device-1\\nFORGED level=CRITICAL\\r\\t\\x1b[31m\\x9b32m\\u2028NEXT" in rendered
+    assert "\nFORGED" not in output
+    assert "\x1b[31m" not in output
+    assert "\x9b32m" not in output
+
+
+@pytest.mark.parametrize("format_json", [False, True])
 def test_setup_logging_redacts_and_bounds_exception_text(
     monkeypatch: pytest.MonkeyPatch,
     format_json: bool,

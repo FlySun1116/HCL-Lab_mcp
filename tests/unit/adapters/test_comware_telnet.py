@@ -564,6 +564,61 @@ class TestConsoleTelnetTransport:
         assert result.prompt_detected is not None
         await transport.close()
 
+    async def test_embedded_prompt_like_output_does_not_cross_command_frames(self):
+        """Delayed <fake>/[fake] text must not terminate a response early."""
+
+        async def _delayed_prompt_like_server(reader, writer):
+            writer.write(b"\r\n<H3C>")
+            await writer.drain()
+            try:
+                first_command = await reader.readline()
+                assert first_command.strip() == b"display first"
+                writer.write(b"\r\ndisplay first\r\nresult contains <fake>\r\n")
+                await writer.drain()
+                await asyncio.sleep(0.35)
+                writer.write(b"result contains [fake]\r\n")
+                await writer.drain()
+                await asyncio.sleep(0.35)
+                writer.write(b"FIRST COMPLETE\r\n<H3C>")
+                await writer.drain()
+
+                second_command = await reader.readline()
+                assert second_command.strip() == b"display second"
+                writer.write(b"\r\ndisplay second\r\nSECOND COMPLETE\r\n<H3C>")
+                await writer.drain()
+                await reader.read()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(_delayed_prompt_like_server, "127.0.0.1", 0)
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=server.sockets[0].getsockname()[1],
+            source=DiscoverySource.MANUAL,
+            confidence=1.0,
+        )
+        transport = ConsoleTelnetTransport(DeviceSession(device_id=17, device_name="framing"))
+        target = CommandTarget(project_id="lab", device_id=17)
+        try:
+            await transport.connect(endpoint)
+            first = await transport.execute(CommandRequest(target=target, command="display first"))
+            second = await transport.execute(CommandRequest(target=target, command="display second"))
+
+            assert "result contains <fake>" in first.raw_output
+            assert "result contains [fake]" in first.raw_output
+            assert "FIRST COMPLETE" in first.raw_output
+            assert "SECOND COMPLETE" not in first.raw_output
+            assert "SECOND COMPLETE" in second.raw_output
+            assert "FIRST COMPLETE" not in second.raw_output
+            assert first.prompt_detected == "<H3C>"
+            assert second.prompt_detected == "<H3C>"
+        finally:
+            await transport.close()
+            server.close()
+            await server.wait_closed()
+
     async def test_execute_unknown_command(self, transport, endpoint, server):
         await transport.connect(endpoint)
 

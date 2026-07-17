@@ -486,7 +486,7 @@ beta.2 的实际发现流程：
 1. `ProjectAwareRuntimeDiscovery` 在每次项目级或设备级查询前读取拓扑，并把设备 ID/名称注册到 runtime adapter，消除调用顺序依赖。
 2. 使用公开的 Windows 卸载注册表元数据、显式 `install_dir` 和常见目录定位 HCL 5.10.x 日志；进程检测只表示 HCL 可能运行，不表示任何具体设备已启动。
 3. 按时间顺序归并轮转日志，解析 project binding、console created、console closed 和 topology alias rebound。只有明确绑定到目标项目/设备且未关闭的日志端口才成为 candidate。
-4. candidate 必须是 loopback 地址，并通过有界 TCP/Telnet 探测与 Comware prompt 识别。探测最多发送空 CRLF 以唤醒 prompt，永不回答 login/password，也不执行设备命令。
+4. candidate 必须是 loopback 地址，并通过有界 TCP/Telnet 探测与 Comware prompt 识别。探测最多发送空 CRLF 以唤醒 prompt，永不回答 login/password，也不执行设备命令。超限日志只读取连续尾部，任何未读区间都会清除旧 alias/project/console 状态，只有区间后重新出现的明确项目绑定才能产生 endpoint。
 5. 验证成功后才发布 `source=probe`、`confidence=1` 的 endpoint；项目级与设备级查询共享 2 秒运行时缓存。
 
 `fallback_telnet_base` 为配置兼容字段，beta.2 不用它生成 candidate，更不会用 `base + device_id` 公式声明设备可操作。`max_probe_ports` 只限制已有日志 candidate 的探测数量。禁止扫描局域网、连接非 loopback 地址，或把 HCL 内部 16500/16600/18600 作为设备控制台。
@@ -506,7 +506,7 @@ beta.2 已实现：
 
 - `ConsoleTelnetTransport`：连接 HCL loopback Telnet 控制台；处理 Telnet IAC、启动噪声、回显、分页和重连。
 - `DeviceSessionManager` / `SessionManagerTransport`：按设备序列化连接，并使用 task-local 上下文防止并发请求跨设备路由。
-- prompt 失败、命令超时、EOF、取消、输出截断都会关闭并失效底层连接；只有收到完整 final prompt 且流仍打开时才允许会话复用，避免迟到输出跨调用污染。
+- prompt 失败、命令超时、EOF、取消、输出截断都会关闭并失效底层连接；只有收到独立终行且与连接时捕获值完全一致的 final prompt、并确认流仍打开时才允许会话复用，避免正文中的 prompt-like 文本或迟到输出跨调用污染。
 
 后续实现：
 
@@ -578,7 +578,7 @@ beta.2 已实现：
 4. Windows `%LOCALAPPDATA%\h3c-hcl-mcp\config.yaml|config.yml|config.json`；
 5. 程序安全默认值。
 
-没有配置文件时 Server 以只读、stdio 安全默认值正常启动；显式选择的文件缺失、格式损坏、字段未知或值越界时，在启动 MCP 协议前以退出码 1 失败。路径字段支持环境变量和用户目录展开。列表型环境变量使用 JSON，例如 `H3C_HCL_MCP__HCL__PROJECTS_DIRS='["D:\\HCL\\Projects"]'`。敏感项不得写入仓库 YAML，日志绝不回显密钥值。
+没有配置文件时 Server 以只读、stdio 安全默认值正常启动；显式选择的文件缺失、格式损坏、字段未知或值越界时，在启动 MCP 协议前以退出码 1 失败。路径字段支持环境变量和用户目录展开。列表型环境变量使用 JSON，例如 `H3C_HCL_MCP__HCL__PROJECTS_DIRS='["D:\\HCL\\Projects"]'`。敏感项不得写入仓库 YAML，日志绝不回显密钥值、本机绝对路径或可伪造新记录的控制字符。
 
 ### 8.2 `config.yaml` 示例
 

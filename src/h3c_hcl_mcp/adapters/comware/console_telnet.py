@@ -242,6 +242,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                     timeout=request.timeout_seconds,
                     max_chars=request.max_output_chars,
                     warnings=warnings,
+                    expected_prompt=self._current_prompt,
                 )
             except TimeoutError:
                 duration = (time.monotonic() - start) * 1000
@@ -272,7 +273,7 @@ class ConsoleTelnetTransport(DeviceTransport):
             duration = (time.monotonic() - start) * 1000
 
             # Detect final prompt
-            prompt = detect_prompt(raw_output)
+            prompt = detect_prompt(raw_output, expected_prompt=self._current_prompt)
             self._current_prompt = prompt
 
             truncated = len(raw_output) >= request.max_output_chars
@@ -396,6 +397,7 @@ class ConsoleTelnetTransport(DeviceTransport):
         timeout: float,
         max_chars: int,
         warnings: list[str],
+        expected_prompt: str | None,
     ) -> str:
         """Read command output from the device, handling pagination.
 
@@ -416,7 +418,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                 )
             except TimeoutError:
                 # Check if we already have a final prompt
-                prompt = detect_prompt(buffer)
+                prompt = detect_prompt(buffer, expected_prompt=expected_prompt)
                 if prompt is not None and not is_more_prompt(buffer):
                     # Buffer looks complete — give it one more short poll
                     remaining = deadline - time.monotonic()
@@ -457,7 +459,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                 deadline = max(deadline, time.monotonic() + (timeout * 0.5))
 
             # Check for final prompt
-            prompt = detect_prompt(buffer)
+            prompt = detect_prompt(buffer, expected_prompt=expected_prompt)
             if prompt is not None and not is_more_prompt(buffer):
                 # Brief pause to ensure output is complete
                 remaining = deadline - time.monotonic()
@@ -474,7 +476,7 @@ class ConsoleTelnetTransport(DeviceTransport):
                                 # If the extra data is only a prompt (server's
                                 # response to pagination space), skip it —
                                 # the output is already complete.
-                                extra_prompt = detect_prompt(extra)
+                                extra_prompt = detect_prompt(extra, expected_prompt=expected_prompt)
                                 if extra_prompt and extra.strip() == extra_prompt:
                                     pass  # ignore redundant prompt
                                 else:
