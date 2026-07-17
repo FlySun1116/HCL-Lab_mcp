@@ -271,8 +271,11 @@ def _registry_string(key: object, name: str) -> str:
     try:
         import winreg
 
-        value = winreg.QueryValueEx(key, name)[0]  # type: ignore[arg-type]
-    except (ImportError, OSError):
+        # Mypy intentionally hides Windows-only winreg members when checking
+        # on Linux, while this function is guarded by a win32 runtime path.
+        query_value_ex = vars(winreg)["QueryValueEx"]
+        value = query_value_ex(key, name)[0]
+    except (ImportError, KeyError, OSError):
         return ""
     return str(value).strip() if value is not None else ""
 
