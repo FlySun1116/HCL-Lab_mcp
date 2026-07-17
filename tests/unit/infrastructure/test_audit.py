@@ -119,6 +119,26 @@ class TestAppendAndQuery:
         assert results[0].tool == "execute_display"
 
     @pytest.mark.asyncio
+    async def test_retention_removes_expired_events_on_append(self, tmp_path: Path) -> None:
+        store = SQLiteAuditStore(db_path=str(tmp_path / "audit.db"), retention_days=7)
+        await store.append(
+            _make_event(
+                event_id="evt-expired",
+                request_id="req-expired",
+                timestamp=datetime.now(UTC) - timedelta(days=8),
+            )
+        )
+        await store.append(_make_event(event_id="evt-current", request_id="req-current"))
+
+        results = await store.query(limit=10)
+
+        assert [event.event_id for event in results] == ["evt-current"]
+
+    def test_rejects_invalid_retention(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="retention_days"):
+            SQLiteAuditStore(db_path=str(tmp_path / "audit.db"), retention_days=0)
+
+    @pytest.mark.asyncio
     async def test_append_multiple_events(self, audit_store: SQLiteAuditStore) -> None:
         for i in range(5):
             await audit_store.append(_make_event(event_id=f"evt-{i:03d}", request_id=f"req-{i:03d}"))
@@ -171,13 +191,13 @@ class TestAppendAndQuery:
 
     @pytest.mark.asyncio
     async def test_query_normalizes_non_utc_offsets(self, audit_store: SQLiteAuditStore) -> None:
-        timestamp = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+        timestamp = datetime.now(UTC).replace(microsecond=0)
         china_tz = timezone(timedelta(hours=8))
         await audit_store.append(_make_event(event_id="evt-offset", timestamp=timestamp))
 
         results = await audit_store.query(
-            since=datetime(2026, 1, 1, 8, 0, tzinfo=china_tz),
-            until=datetime(2026, 1, 1, 9, 0, tzinfo=china_tz),
+            since=(timestamp - timedelta(minutes=1)).astimezone(china_tz),
+            until=(timestamp + timedelta(minutes=1)).astimezone(china_tz),
             limit=10,
         )
 

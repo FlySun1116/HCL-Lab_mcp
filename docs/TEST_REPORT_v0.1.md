@@ -1,10 +1,10 @@
 # HCL-Lab_mcp v0.1 测试报告
 
 > 测试对象：`0.1.0-beta.2` 本地提交候选
-> 实现/CI 修复提交：`192fc41`
-> 证据基线：`192fc41` + 本报告所在文档提交
-> 报告日期：2026-07-17
-> 当前结论：**CONDITIONAL GO**（代码、本地制品和远端 CI 门禁通过；公开发布仍等待真实运行设备正向验证、客户端 UI 证据和维护者授权）
+> 分支基线：`da7747b` + 本报告所在提交
+> 证据基线：2026-07-18 本地源码、协议、双制品、文档、依赖和安全门禁；远端以 Draft PR #4 新 run 为准
+> 报告日期：2026-07-18
+> 当前结论：**CONDITIONAL GO**（本地代码/制品门禁通过；新增远端 docs/security/CodeQL 门禁、真实运行设备正向验证、客户端 UI 与维护者发布授权仍待完成）
 
 本报告替代 beta.1 的旧失败快照。所有“已修复”结论均以当前源码、自动化测试或本机只读观察为依据；没有把未运行设备上的命令伪造为成功。仓库尚未发布 PyPI、tag 或 GitHub Release。
 
@@ -17,7 +17,7 @@
 | 项目主运行时 | Python 3.14.5（冻结候选全量测试） |
 | 发布目标运行时 | Python 3.12.13（干净 beta.2 wheel 与 sdist 均已验证） |
 | Python 包版本 | `0.1.0-beta.2`（PEP 440：`0.1.0b2`） |
-| MCP SDK | 官方 MCP Python SDK v1 稳定线（锁定 `<2`） |
+| MCP SDK | 官方 MCP Python SDK `1.28.1`（依赖限制 `>=1.28.1,<1.29`） |
 | MCP transport | `stdio` |
 | 实际 MCP Client | Claude Code 2.1.211 隔离临时 profile 已连接；Cursor 3.11.25 CLI 在 MCP 前因 MachineGuid 查询失败；Claude Desktop/Cursor UI 待测 |
 | 真实设备写操作 | 未执行；测试只允许 read-only |
@@ -39,8 +39,8 @@
 | 显式缺失配置 | 通过 | 退出码 1、stdout 为空、stderr 明确报错 |
 | 显式损坏配置 | 通过 | 在 MCP 协议启动前失败关闭 |
 | beta.2 wheel/sdist | 通过 | `uv build --clear` 仅生成一个 `0.1.0b2` wheel 和一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 依据 wheel 元数据解析并安装 33 个依赖；版本/entry point 一致；官方 stdio 7 passed in 9.91s |
-| Python 3.12 干净 sdist | 通过 | 依据 sdist 元数据解析并安装 33 个依赖；版本/entry point 一致；官方 stdio 7 passed in 9.95s |
+| Python 3.12 干净 wheel | 通过 | 依据 wheel 元数据解析并安装 33 个依赖；官方 stdio 7 passed in 11.45s |
+| Python 3.12 干净 sdist | 通过 | 依据 sdist 元数据解析并安装 33 个依赖；官方 stdio 7 passed in 11.06s |
 | Claude Code 隔离连接 | 通过 | 2.1.211，临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 返回 `Connected`；未调用模型 API |
 | 公共 registry 安装 | 失败/未发布 | PyPI 不存在 beta.2，不能使用 `uvx h3c-hcl-mcp` |
 
@@ -111,16 +111,17 @@ beta.2 注册 15 个 Tool：
 | 检查 | 最终结果 |
 |---|---|
 | `uv run --locked ruff check .` | 通过 |
-| `uv run --locked ruff format --check .` | 通过：102 个文件 |
-| `uv run --locked mypy src` | 通过：69 个源文件 |
-| `uv run --locked mypy --platform linux src` | 通过：Linux typeshed 平台下 69 个源文件 |
-| 严格 warning + coverage 全量测试 | 通过：**651 passed in 61.47s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过：**87.19%**；3,763 statements / 482 missed，门槛 85% |
+| `uv run --locked ruff format --check .` | 通过：110 个文件 |
+| `uv run --locked mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py` | 通过：73 个源/脚本文件 |
+| 严格 warning + coverage 全量测试 | 通过：**734 passed、3 skipped in 65.23s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过：**87.18%**；3,853 statements / 494 missed，门槛 85% |
+| 文档/示例/Action SHA | 通过：29 个 Markdown、24 个内部链接、10 个结构化示例 |
+| 依赖/许可证 | 通过：`uv pip check`、`pip-audit`、GPL/AGPL deny gate |
 | `uv build --clear` | 通过：唯一 `0.1.0b2` wheel/sdist |
-| Python 3.12 wheel stdio | 通过：元数据解析 33 个依赖、独立安装、console entry point、**7 passed in 9.91s** |
-| Python 3.12 sdist stdio | 通过：元数据解析 33 个依赖、独立安装、console entry point、**7 passed in 9.95s** |
-| 制品内容策略 | 通过：wheel 76/sdist 156 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接、路径穿越或超大成员 |
-| GitHub Actions | 通过：[CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 的 6 个 job 全部成功 |
+| Python 3.12 wheel stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 11.45s** |
+| Python 3.12 sdist stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 11.06s** |
+| 制品内容策略 | 通过：wheel 77/sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接、路径穿越或超大成员 |
+| GitHub Actions | 待刷新：旧 6-job run 已通过；本轮新增 docs/security/CodeQL workflow 待 Draft PR #4 新 run |
 | `git diff --check` | 通过 |
 
 # 成功项
@@ -344,7 +345,7 @@ beta.2 注册 15 个 Tool：
 
 修复：将 `pyyaml>=6.0.3` 加入 production dependencies。
 
-验证证据：当前候选 651 项全量通过；Python 3.12.13 干净 wheel 与 sdist 的 YAML/JSON/CLI/env stdio 场景均进入 7 passed。
+验证证据：当前候选 734 passed、3 skipped；Python 3.12.13 干净 wheel 与 sdist 的 YAML/JSON/CLI/env stdio 场景均进入 7 passed。
 
 ## BUG-017
 
@@ -382,13 +383,13 @@ beta.2 注册 15 个 Tool：
 
 预期：全部文件格式合格，并在冻结候选上运行全量门禁。
 
-实际：最终已格式化；`ruff format --check` 报告 102 个文件全部合格。
+实际：最终已格式化；`ruff format --check` 报告 110 个文件全部合格。
 
 根因：多个 beta.2 修复并行集成时尚未执行最终格式化和冻结回归。
 
 修复：Team Lead 运行 formatter，审查 diff，并重跑 ruff check/format、mypy、pytest、build 和 wheel/sdist clean-artifact stdio。
 
-验证证据：Ruff check/format 通过、mypy 69 个源文件通过、651 passed、87.19% active-v0.1 coverage、beta.2 clean build 通过，Python 3.12 wheel/sdist stdio 各 7 passed。
+验证证据：Ruff check/format 通过、mypy 73 个源/脚本文件通过、734 passed/3 skipped、87.18% active-v0.1 coverage、beta.2 clean build 通过，Python 3.12 wheel/sdist stdio 各 7 passed。
 
 ## BUG-019
 
@@ -410,7 +411,7 @@ beta.2 注册 15 个 Tool：
 
 修复：接入 restriction-only allowlist 和不区分大小写的字面 deny pattern，始终先执行不可覆盖的注入/危险规则。
 
-验证证据：策略单元测试及 651 项候选全量回归通过。
+验证证据：策略单元测试及 734 passed/3 skipped 候选全量回归通过。
 
 ## BUG-020
 
@@ -432,7 +433,7 @@ beta.2 注册 15 个 Tool：
 
 修复：transport 自身在所有失败路径 fail-closed；EOF 返回 `CONNECTION_CLOSED`，无 prompt 返回 `COMMAND_TIMEOUT`，截断连接不复用；MCP 边界移除未可信输出字段。
 
-验证证据：Telnet fake server 清理、重连、迟到输出、100 并发和错误边界测试进入 651 项全量通过。
+验证证据：Telnet fake server 清理、重连、迟到输出、100 并发和错误边界测试进入 734 passed/3 skipped 全量回归。
 
 ## BUG-021
 
@@ -454,7 +455,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展 ToolManager 边界、UTC 迁移/规范化、公共 topology DTO 脱敏，并用 `asyncio.to_thread` 隔离阻塞文件 I/O。
 
-验证证据：官方内存协议、SQLite、拓扑、全局超时和最终输出预算回归进入 651 项全量通过。
+验证证据：官方内存协议、SQLite、拓扑、全局超时和最终输出预算回归进入 734 passed/3 skipped 全量回归。
 
 ## BUG-022
 
@@ -476,7 +477,7 @@ beta.2 注册 15 个 Tool：
 
 修复：把通用 PEM/OpenSSH 规则置于具体 key 规则之前，覆盖文本结尾，并补 SNMPv3 变体规则。
 
-验证证据：脱敏聚焦测试及 651 项候选全量回归通过。
+验证证据：脱敏聚焦测试及 734 passed/3 skipped 候选全量回归通过。
 
 ## BUG-023
 
@@ -498,7 +499,7 @@ beta.2 注册 15 个 Tool：
 
 修复：新增 ping/traceroute parser，限制 ping count 1～100、tracert max hops 1～255，并拒绝重复/未知/不安全参数。
 
-验证证据：诊断 parser 测试、六个 H3C read Tool 正向链路及 651 项全量回归通过。
+验证证据：诊断 parser 测试、六个 H3C read Tool synthetic/fake 正向链路及 734 passed/3 skipped 全量回归通过。
 
 ## BUG-024
 
@@ -520,7 +521,7 @@ beta.2 注册 15 个 Tool：
 
 修复：使用线程桥接同步发现；限制 16 个日志文件和每文件 4 MiB；补齐连接、扫描器和 writer 清理。
 
-验证证据：100 个同设备 fake-console 并发请求无串线；严格 warning 模式下 651 项通过。
+验证证据：100 个同设备 fake-console 并发请求无串线；严格 warning 模式下 734 passed/3 skipped。
 
 ## BUG-025
 
@@ -542,7 +543,7 @@ beta.2 注册 15 个 Tool：
 
 修复：新增 final-result budget middleware、紧凑 JSON、受限错误 payload，并把预算放在审计边界内。
 
-验证证据：output-budget 单元/集成测试覆盖成功、错误、未知、Schema 和超时；651 项全量通过。
+验证证据：output-budget 单元/集成测试覆盖成功、错误、未知、Schema 和超时；734 passed/3 skipped 全量回归。
 
 ## BUG-026
 
@@ -564,7 +565,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展顺序敏感的凭据规则，并为完整/快速路径增加对称回归。
 
-验证证据：脱敏聚焦测试和 651 项全量回归通过。
+验证证据：脱敏聚焦测试和 734 passed/3 skipped 全量回归通过。
 
 ## BUG-027
 
@@ -586,7 +587,7 @@ beta.2 注册 15 个 Tool：
 
 修复：增加有界 cursor 参数并向下传递。
 
-验证证据：project-list 分页集成测试及 651 项全量回归通过。
+验证证据：project-list 分页集成测试及 734 passed/3 skipped 全量回归通过。
 
 ## BUG-028
 
@@ -602,7 +603,7 @@ beta.2 注册 15 个 Tool：
 
 预期：完整测试套件进入 active-v0.1 coverage；wheel/sdist 各自独立安装并运行同一 stdio 黑盒套件。
 
-实际：coverage 为 87.19%；两个制品均在 Python 3.12.13 独立环境依据各自包元数据解析 33 个依赖，通过版本、entry point 和 7 个 stdio 场景。
+实际：coverage 为 87.18%；两个制品均在 Python 3.12.13 独立环境依据各自包元数据解析 33 个依赖，通过版本、entry point 和 7 个 stdio 场景。
 
 根因：早期 package smoke 只证明源码模块和 wheel 的部分路径可运行。
 
@@ -696,7 +697,7 @@ beta.2 注册 15 个 Tool：
 
 修复：增加仓库级 ignore、Hatch exclude 和 `scripts/check_distribution.py`，检查路径、链接、敏感名称/扩展、大小及必需文件。
 
-验证证据：wheel/sdist 内容策略通过；检查器报告 wheel 76 members、sdist 156 members，且 LICENSE、NOTICE、`schema.sql` 完整。
+验证证据：wheel/sdist 内容策略通过；检查器报告 wheel 77 members、sdist 174 members，且 LICENSE、NOTICE、`schema.sql` 完整。
 
 ## BUG-033
 
@@ -718,7 +719,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展顺序敏感的凭据模式，并增加完整/快速路径对称测试。
 
-验证证据：新增语法聚焦测试及 651 项全量回归通过。
+验证证据：新增语法聚焦测试及 734 passed/3 skipped 全量回归通过。
 
 ## BUG-034
 
@@ -740,7 +741,7 @@ beta.2 注册 15 个 Tool：
 
 修复：增加 endpoint 验证、增量 IAC 状态机、连接 reservation、会话计数/时间戳和 lifespan 清理。
 
-验证证据：console/session/server 聚焦测试及 651 项严格 warning 全量回归通过。
+验证证据：console/session/server 聚焦测试及 734 passed/3 skipped 严格 warning 全量回归通过。
 
 ## BUG-035
 
@@ -762,7 +763,7 @@ beta.2 注册 15 个 Tool：
 
 修复：审计路径 fail closed；统一有界字段并在 logging adapter 截断客户端值。
 
-验证证据：审计失败、Schema 上限、输出预算和日志截断测试及 651 项全量回归通过。
+验证证据：审计失败、Schema 上限、输出预算和日志截断测试及 734 passed/3 skipped 全量回归通过。
 
 ## BUG-036
 
@@ -784,7 +785,151 @@ beta.2 注册 15 个 Tool：
 
 修复：通过受控动态属性读取 Windows registry API 并处理 `KeyError`；按 gitleaks-action v3 官方说明给扫描步骤传入仓库 `GITHUB_TOKEN`。
 
-验证证据：默认和 `--platform linux` mypy 均通过，651 项严格 warning 回归通过，第二次远端 CI 六项全绿。
+验证证据：历史默认和 `--platform linux` mypy 均通过；当前默认 mypy 73 个源/脚本文件、734 passed/3 skipped 严格 warning 回归通过，旧远端 CI 六项全绿。
+
+## BUG-037
+
+编号：BUG-037
+
+级别：P1
+
+状态：VERIFIED
+
+问题：`project.json`、`.net` 及其引用路径曾缺少统一大小上限和完整的项目根/symlink 边界。
+
+复现步骤：构造超大项目文件、绝对/UNC/盘符/`..` 引用或指向项目根外的 symlink/junction。
+
+预期：在解析前有界读取并拒绝所有项目根逃逸，错误不泄漏绝对路径。
+
+实际：`project.json` 限制 16 MiB、`.net` 限制 64 MiB；引用按 realpath 验证并拒绝逃逸。
+
+建议：保持当前边界；未来改变限额须有真实兼容性证据。
+
+## BUG-038
+
+编号：BUG-038
+
+级别：P1
+
+状态：VERIFIED
+
+问题：旧制品检查主要依靠危险扩展 denylist，未知类型仍可能进入 wheel/sdist；仓库本身也缺少 tracked-file allowlist。
+
+复现步骤：向 archive 或 Git inventory 注入未列入 denylist 的二进制、链接、大小写冲突、秘密文件或非 fixture `.net/.cfg`。
+
+预期：只允许明确审核过的源码/文档/配置类型和位置，未知成员默认拒绝。
+
+实际：制品检查改为 wheel/sdist allowlist；仓库检查基于 `git ls-files -z`，拒绝危险路径、资产、链接、大小和 casefold 冲突。
+
+建议：新增公开文件类型时同步更新策略和纯函数测试，不放宽为通用扩展。
+
+## BUG-039
+
+编号：BUG-039
+
+级别：P1
+
+状态：VERIFIED（本地）/REMOTE-PENDING
+
+问题：仓库此前没有独立依赖漏洞、许可证、CodeQL、文档、SBOM/provenance 和可信发布门禁。
+
+复现步骤：查看旧 `.github/workflows/`，只有基础 CI/secret scan，无法生成受证明的 release assets。
+
+预期：PR 运行依赖/许可证/CodeQL/docs/repository gates；发布只从 main 的验证签名 tag 进入受保护 PyPI environment，并生成 SBOM、校验和和 provenance。
+
+实际：新增 `security.yml`、`docs.yml`、`release.yml`，所有第三方 Action 固定完整 SHA；本地依赖、许可证、文档、构建和 SBOM 路径通过。
+
+建议：推送后要求新 workflows 全绿，再由维护者配置 required checks 与 release environment。
+
+## BUG-040
+
+编号：BUG-040
+
+级别：P2
+
+状态：VERIFIED
+
+问题：v0.1 配置模型曾接受 `ssh` 或混合 transport，实际实现却只有 `console_telnet`，造成虚假能力。
+
+复现步骤：设置 `device.preferred_transports=["ssh"]` 或混合列表并加载配置。
+
+预期：v0.1 只接受且必须等于 `["console_telnet"]`。
+
+实际：空列表、SSH、NETCONF、混合与重复项均在启动前拒绝。
+
+建议：SSH 只在 v0.2 adapter、契约和安全测试完成后通过 ADR 开放。
+
+## BUG-041
+
+编号：BUG-041
+
+级别：P2
+
+状态：VERIFIED
+
+问题：`audit.retention_days` 曾仅存在于配置，SQLite 不清理过期事件；异常文本和 traceback 也可能无界进入日志。
+
+复现步骤：插入超过 retention window 的事件，或记录携带长秘密尾部的异常。
+
+预期：过期事件按 UTC 清理；异常在 human/JSON 日志中先脱敏再按字节边界截断。
+
+实际：store 初始化和 append 后清理过期事件；异常文本/traceback 上限 1024 字符并经过敏感信息脱敏。
+
+建议：未来若需要长期合规归档，使用独立外部 AuditSink，不取消本地保留期。
+
+## BUG-042
+
+编号：BUG-042
+
+级别：P2
+
+状态：VERIFIED
+
+问题：旧 server 在注册后直接修改 FastMCP `_tool_manager`，依赖范围又宽至 `<2`，SDK patch/minor 漂移可能静默破坏协议路径。
+
+复现步骤：搜索源码中的 `_tool_manager`/`_mcp_server` 并检查 MCP 依赖上界。
+
+预期：Tool 注册/调用/Schema 走公开 API；不可避免的 version 私有桥单点隔离并 fail fast。
+
+实际：`HCLFastMCP` 使用公开 `add_tool`、`call_tool`、`list_tools`；源码仅 `sdk_compat.py` 保留 `_mcp_server`，依赖限制 `>=1.28.1,<1.29`，官方 stdio 7 场景和 63 个集成测试通过。
+
+建议：任何 MCP SDK 升级先重跑完整协议矩阵并更新验证版本，不直接放宽上界。
+
+## BUG-043
+
+编号：BUG-043
+
+级别：P2
+
+状态：OPEN / MAINTAINER-DECISION
+
+问题：公开 Tool input schema 当前没有统一声明 `additionalProperties: false`，客户端可发送未知字段后由运行时验证拒绝，但 Schema 本身不够明确。
+
+复现步骤：检查 `tools/list` 的 15 个 `inputSchema` 并提交未知字段。
+
+预期：由维护者决定是否把未知字段拒绝固化为公开 Schema 契约，并评估 Claude/Cursor 兼容性。
+
+实际：本轮未修改公共 Tool Schema；运行时仍返回稳定 `INVALID_ARGUMENT`。
+
+建议：作为独立 ADR/契约 PR 处理，不能夹带在安全修复中。
+
+## BUG-044
+
+编号：BUG-044
+
+级别：P1
+
+状态：HUMAN-REQUIRED
+
+问题：GitHub Private Vulnerability Reporting 当前 disabled，`main` 未保护，`pypi` environment/Trusted Publisher/显式发布开关尚未配置。
+
+复现步骤：GitHub API 查询 private vulnerability reporting 和 main protection；检查仓库 environments/PyPI Publisher。
+
+预期：公开发布前具备私密报告入口、required checks、受保护发布环境和 OIDC Trusted Publisher。
+
+实际：代码与 workflow 已 fail closed，但仓库侧设置尚未执行。
+
+建议：由维护者确认后统一配置；这会改变仓库治理和发布权限，Agent 不得自行启用。
 
 # 优化建议
 
@@ -800,13 +945,13 @@ beta.2 注册 15 个 Tool：
 | 优先级 | 活跃项 | 发布要求 |
 |---|---|---|
 | P0 | BUG-001、BUG-017 | 真实命令成功并完成公开发布授权后才能宣布外部可安装；发布动作本身需维护者确认 |
-| P1 | BUG-029、BUG-030（仅剩仓库治理） | BUG-033、BUG-036 已验证；无未关闭 P1 代码缺陷，真实客户端和 `main` 保护规则需在发布前补证据 |
-| P2 | BUG-005 | 维护者决策；不阻止 namespaced Tool 的技术验证 |
+| P1 | BUG-029、BUG-030、BUG-039、BUG-044（外部/远端门禁） | 新 workflows 全绿后仍需客户端证据、`main` 保护、私密报告和受保护发布环境 |
+| P2 | BUG-005、BUG-043 | Tool alias 与 `additionalProperties` 都是公共契约决策，不夹带修改 |
 
 # 交给开发 Agent 的修复清单
 
-1. **无待修复的 P1 代码缺陷**：BUG-018～028、BUG-031～036 已在当前候选验证；本地实现、双制品和六项远端 CI 门禁通过。
+1. **无待修复的 P1 本地代码缺陷**：BUG-018～028、BUG-031～042 已在当前候选验证；新增远端 security/docs/CodeQL 门禁仍需 Draft PR 新 run。
 2. **真实 HCL 正向测试**：等待维护者启动设备，只执行两条 display 命令并记录脱敏结果。
 3. **发布决策**：候选分支和 Draft PR #4 已通过 CI；merge/tag/Release/PyPI 仍需维护者明确授权。
-4. **真实客户端与仓库治理**：按 BUG-029/030 补齐 Claude Desktop、Cursor 和 `main` 保护规则证据。
-5. **后续契约决策**：Tool alias 继续单独评审，不在 beta.2 候选中临时增加公共 Tool。
+4. **真实客户端与仓库治理**：按 BUG-029/030/044 补齐 Claude Desktop、Cursor、`main` 保护、私密报告和受保护发布环境。
+5. **后续契约决策**：Tool alias 与 `additionalProperties`（BUG-043）分别单独评审，不在 beta.2 安全候选中临时改变公共 Tool Schema。

@@ -118,7 +118,8 @@ Default Windows config files are searched in this order:
 %LOCALAPPDATA%\h3c-hcl-mcp\config.json
 ```
 
-See [config/config.example.yaml](config/config.example.yaml) and
+See the [configuration guide](docs/configuration.md),
+[config/config.example.yaml](config/config.example.yaml), and
 [config/config.example.json](config/config.example.json). Path values support
 `~`, `${USERPROFILE}`, and other environment references. Lists supplied by an
 environment variable use JSON, for example:
@@ -190,7 +191,7 @@ command; at most one empty CRLF is used to request the current prompt.
   stable error code when auditing is enabled.
 - stdout is reserved for MCP JSON-RPC; logs and startup messages use stderr.
 
-See [SECURITY.md](SECURITY.md) for the full model.
+See [SECURITY.md](SECURITY.md) and the [security model](docs/security-model.md).
 
 ## Development
 
@@ -200,12 +201,16 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
 uv run pytest -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning --cov=h3c_hcl_mcp --cov-report=term-missing --cov-fail-under=85
+uv run python scripts/check_docs.py .
+uv run python scripts/check_repository.py .
 uv build --clear
 uv run python scripts/check_distribution.py dist
 ```
 
-See [docs/design.md](docs/design.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
-[docs/HANDOVER.md](docs/HANDOVER.md) for architecture and handoff details.
+See [docs/design.md](docs/design.md), [CONTRIBUTING.md](CONTRIBUTING.md),
+[GOVERNANCE.md](GOVERNANCE.md), [docs/release-process.md](docs/release-process.md),
+[docs/compatibility.md](docs/compatibility.md), and [docs/HANDOVER.md](docs/HANDOVER.md)
+for architecture, compatibility, release, and handoff details.
 
 ## License
 

@@ -126,6 +126,27 @@ def test_setup_logging_bounds_client_controlled_arguments(
     assert len(output) < 2_000
 
 
+@pytest.mark.parametrize("format_json", [False, True])
+def test_setup_logging_redacts_and_bounds_exception_text(
+    monkeypatch: pytest.MonkeyPatch,
+    format_json: bool,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO", format_json=format_json)
+
+    secret_tail = "SHOULD_NOT_REACH_THE_LOG"
+    try:
+        raise RuntimeError("x" * 5_000 + secret_tail)
+    except RuntimeError:
+        logging.getLogger("tests.exception-boundary").exception("bounded failure")
+
+    output = stream.getvalue()
+    assert secret_tail not in output
+    assert len(output) < 3_000
+    assert "bounded failure" in output
+
+
 def test_get_logger_returns_named_standard_logger() -> None:
     logger = logging_module.get_logger("h3c_hcl_mcp.tests")
 

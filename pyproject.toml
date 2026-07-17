@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp>=1.28,<2",
+    "mcp>=1.28.1,<1.29",
     "pydantic>=2.0,<3",
     "pyyaml>=6.0.3",
 ]
@@ -108,5 +108,7 @@ skip_covered = true
 
 [dependency-groups]
 dev = [
+    "pip-audit==2.10.1",
+    "pip-licenses==5.5.5",
     "types-pyyaml>=6.0.12.20260518",
 ]

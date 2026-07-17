@@ -17,6 +17,11 @@ from typing import Any
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.project import Link
 
+# HCL topology files are text metadata.  This limit is intentionally generous
+# for large labs while preventing an untrusted project from causing an
+# unbounded allocation before parsing.
+MAX_NET_FILE_BYTES = 64 * 1024 * 1024
+
 
 class NetDeviceEntry:
     """Parsed device entry from a .net file."""
@@ -74,40 +79,74 @@ class NetLinkEntry:
 
 
 def _validate_path(file_path: str) -> None:
-    """Reject path traversal patterns."""
-    if ".." in file_path:
+    """Reject explicit parent traversal without exposing the local path."""
+    if ".." in re.split(r"[\\/]", file_path):
         raise DomainError(
             code=ErrorCode.PROJECT_PATH_TRAVERSAL,
-            message=f"Path traversal detected: {file_path!r}",
-            details={"path": file_path},
+            message="Path traversal detected in .net path",
+            details={"file": os.path.basename(file_path) or ".net"},
+        )
+
+
+def _net_file_label(file_path: str) -> str:
+    """Return a non-sensitive filename for errors and parser diagnostics."""
+    return os.path.basename(file_path) or ".net"
+
+
+def _validate_net_file_size(file_path: str) -> None:
+    """Reject a missing, unreadable, or oversized topology before reading it."""
+    label = _net_file_label(file_path)
+    try:
+        size = os.path.getsize(file_path)
+    except OSError as exc:
+        raise DomainError(
+            code=ErrorCode.PROJECT_DAMAGED,
+            message="Cannot inspect .net file",
+            details={"file": label},
+        ) from exc
+    if size > MAX_NET_FILE_BYTES:
+        raise DomainError(
+            code=ErrorCode.PROJECT_DAMAGED,
+            message=".net file exceeds the supported size limit",
+            details={"file": label, "max_bytes": MAX_NET_FILE_BYTES},
         )
 
 
 def _read_net_text(file_path: str) -> str:
     _validate_path(file_path)
+    label = _net_file_label(file_path)
     if not os.path.isfile(file_path):
         raise DomainError(
             code=ErrorCode.PROJECT_DAMAGED,
-            message=f".net file not found: {file_path!r}",
-            details={"path": file_path},
+            message=".net file not found",
+            details={"file": label},
         )
+    _validate_net_file_size(file_path)
     try:
-        with open(file_path, encoding="utf-8-sig") as file:
-            return file.read()
+        with open(file_path, "rb") as file:
+            raw = file.read(MAX_NET_FILE_BYTES + 1)
+        if len(raw) > MAX_NET_FILE_BYTES:
+            raise DomainError(
+                code=ErrorCode.PROJECT_DAMAGED,
+                message=".net file exceeds the supported size limit",
+                details={"file": label, "max_bytes": MAX_NET_FILE_BYTES},
+            )
+        return raw.decode("utf-8-sig")
     except (OSError, UnicodeError) as exc:
         raise DomainError(
             code=ErrorCode.PROJECT_DAMAGED,
-            message=f"Cannot read .net file: {exc}",
-            details={"path": file_path},
+            message="Cannot read .net file",
+            details={"file": label},
         ) from exc
 
 
 def parse_net_file(file_path: str) -> tuple[list[NetDeviceEntry], list[NetLinkEntry]]:
     """Parse a real HCL 5.10.x or legacy synthetic ``.net`` file."""
     text = _read_net_text(file_path)
+    file_label = _net_file_label(file_path)
     if any(line.strip().lower() == "[topology]" for line in text.splitlines()):
-        return _parse_synthetic_net(text, file_path)
-    return _parse_hcl_510x_net(text, file_path)
+        return _parse_synthetic_net(text, file_label)
+    return _parse_hcl_510x_net(text, file_label)
 
 
 def _parse_synthetic_net(text: str, file_path: str) -> tuple[list[NetDeviceEntry], list[NetLinkEntry]]:

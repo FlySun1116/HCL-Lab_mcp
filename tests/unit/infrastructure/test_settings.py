@@ -125,9 +125,15 @@ class TestDeviceSettings:
         assert s.command_timeout_seconds == 20
         assert s.per_device_concurrency == 1
 
-    def test_rejects_unsupported_transport_or_concurrency(self) -> None:
-        with pytest.raises(ValidationError, match="preferred_transports"):
-            DeviceSettings(preferred_transports=["netconf"])
+    @pytest.mark.parametrize(
+        "transports",
+        [[], ["ssh"], ["netconf"], ["console_telnet", "ssh"], ["console_telnet", "console_telnet"]],
+    )
+    def test_rejects_unsupported_transport(self, transports: list[str]) -> None:
+        with pytest.raises(ValidationError, match="v0.1 requires preferred_transports"):
+            DeviceSettings(preferred_transports=transports)
+
+    def test_rejects_nonexclusive_concurrency(self) -> None:
         with pytest.raises(ValidationError, match="per_device_concurrency=1"):
             DeviceSettings(per_device_concurrency=2)
 

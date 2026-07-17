@@ -10,7 +10,10 @@ import logging
 import sys
 from typing import Any
 
+from h3c_hcl_mcp.infrastructure.audit.redact import redact_sensitive
+
 _MAX_LOG_ARGUMENT_CHARS = 1024
+_MAX_LOG_EXCEPTION_CHARS = 1024
 
 
 def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
@@ -38,7 +41,7 @@ def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
     if format_json:
         formatter = _JSONFormatter()
     else:
-        formatter = logging.Formatter(
+        formatter = _BoundedExceptionFormatter(
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
@@ -82,8 +85,15 @@ class _JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         if record.exc_info and record.exc_info[1]:
-            log_entry["exception"] = str(record.exc_info[1])
+            log_entry["exception"] = _bounded_exception_text(str(record.exc_info[1]))
         return json.dumps(log_entry, ensure_ascii=False)
+
+
+class _BoundedExceptionFormatter(logging.Formatter):
+    """Redact and bound human-readable exception tracebacks."""
+
+    def formatException(self, exc_info: Any) -> str:  # noqa: N802
+        return _bounded_exception_text(super().formatException(exc_info))
 
 
 class _BoundedLogArgumentsFilter(logging.Filter):
@@ -98,9 +108,19 @@ class _BoundedLogArgumentsFilter(logging.Filter):
 
 
 def _bounded_log_argument(value: object) -> object:
-    if not isinstance(value, str) or len(value) <= _MAX_LOG_ARGUMENT_CHARS:
+    if not isinstance(value, str):
         return value
-    return value[: _MAX_LOG_ARGUMENT_CHARS - 1] + "…"
+    redacted = redact_sensitive(value)
+    if len(redacted) <= _MAX_LOG_ARGUMENT_CHARS:
+        return redacted
+    return redacted[: _MAX_LOG_ARGUMENT_CHARS - 1] + "…"
+
+
+def _bounded_exception_text(value: str) -> str:
+    redacted = redact_sensitive(value)
+    if len(redacted) <= _MAX_LOG_EXCEPTION_CHARS:
+        return redacted
+    return redacted[: _MAX_LOG_EXCEPTION_CHARS - 1] + "…"
 
 
 def get_logger(name: str) -> logging.Logger:

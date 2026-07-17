@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an explicit active-v0.1 line-coverage definition and an 85% CI gate.
 - Added structured Bug, Feature, and Agent Task Issue forms plus a release-oriented PR checklist so a new Agent Team can receive bounded ownership and verification requirements directly from GitHub.
 - Added a reusable distribution archive policy check that rejects local Agent state, credentials, proprietary binaries, links, path traversal, oversized members, and missing license/audit schema files.
+- Added a machine-checkable compatibility matrix covering real-positive metadata parsing, real-negative stopped devices, synthetic S6850/MSR parser evidence, and an explicit untested VSR entry.
+- Added reviewed Claude Agent Team role templates and an opt-in playbook with bounded ownership, human approval gates, and safe Git defaults.
+- Added documentation, repository-security, dependency/license, CodeQL, SBOM, provenance, signed-tag, Trusted Publishing, and fail-closed release workflow gates.
 
 ### Fixed
 
@@ -59,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Excluded `.claude`, `.codex`, `.agents`, caches, virtual environments, and build output from distributions; the source archive no longer includes local Claude settings.
 - Made the Windows registry lookup type-safe under both Windows and Linux mypy platforms.
 - Passed the repository `GITHUB_TOKEN` to gitleaks-action v3 so the pinned secret-scan job can run on pull requests.
+- Bounded `project.json` and `.net` reads, rejected unsafe referenced paths and symlink/junction escapes, and kept all resulting errors free of absolute host paths.
+- Replaced archive extension denylists with explicit wheel/sdist member allowlists and added a tracked-repository policy for secrets, proprietary assets, links, case collisions, and oversized files.
+- Restricted v0.1 transport configuration to exactly `console_telnet`; SSH remains a v0.2 capability rather than an accepted but unusable setting.
+- Enforced `audit.retention_days` in SQLite initialization/appends and bounded/redacted human and JSON exception logging.
+- Replaced FastMCP ToolManager mutation with public registration/call/list extension points; the sole private server-version bridge is isolated behind an MCP 1.28.x compatibility guard.
 
 ### Changed
 
@@ -67,14 +75,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Client configuration examples now launch a source-installed local virtual-environment executable. The package has not yet been published to PyPI, so `uvx h3c-hcl-mcp` is not a supported installation path for this candidate.
 - Upgraded checkout, setup-uv, upload-artifact, and gitleaks Actions to current Node 24 releases and pinned every third-party Action to a reviewed full commit SHA.
 - CI now treats `ResourceWarning` and `PytestUnraisableExceptionWarning` as errors and installs wheel/sdist dependencies only from each artifact's package metadata in clean Python 3.12 environments.
+- The MCP runtime dependency is constrained to the verified `mcp>=1.28.1,<1.29` line until the compatibility bridge is revalidated.
 
 ### Verification status
 
-- Final local-candidate gates pass: Ruff check/format over 102 files, mypy over 69 source files, and **651 pytest tests in 61.47s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
-- Active-v0.1 line coverage is **87.19%** (3,763 statements, 482 missed), above the 85% hard gate.
-- [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) is open and clean; all six jobs in [CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) pass. The repository still has no protection rule on `main`, so these checks are not yet enforced as required checks.
+- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **734 passed, 3 skipped in 65.23s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **87.18%** (3,853 statements, 494 missed), above the 85% hard gate.
+- [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) remains the integration target. The previous six-job CI baseline is green; the newly added docs/security/CodeQL gates require a fresh remote run. The repository still has no protection rule on `main`, so successful checks are not yet enforced as required checks.
 - `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
-- Distribution policy passes with 76 wheel members and 156 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members.
+- Distribution policy passes with 77 wheel members and 174 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members. SHA-256: wheel `36244C5CABB321563835FCEAA5FE5E92F36FEEC8E552AB36EEBBA072BDC05162`; sdist `AF185C190DC92F7C3FAE6F8E3E45999B3030287D1CAFA4667BE99C261575674A`.
+- Locked dependency consistency, runtime vulnerability audit, incompatible-license gate, documentation/examples validation, and SBOM generation all pass locally.
 - The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
 - Claude Code 2.1.211 reports the stdio Server as connected from an isolated temporary profile; Claude Desktop and Cursor UI smoke tests remain external release checks.
 - Synthetic parser, fake console, MCP protocol, validation, audit, configuration, redaction, timeout, and concurrency paths are automated.

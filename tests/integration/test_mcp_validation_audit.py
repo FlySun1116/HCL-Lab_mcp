@@ -8,9 +8,8 @@ from typing import Any, Literal
 
 import anyio
 import pytest
-from mcp import ClientSession
 from mcp.server.fastmcp import FastMCP
-from mcp.shared.message import SessionMessage
+from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult
 
 from h3c_hcl_mcp.domain.audit import AuditEvent
@@ -18,10 +17,8 @@ from h3c_hcl_mcp.domain.errors import ErrorCode
 from h3c_hcl_mcp.domain.result import ToolResult
 from h3c_hcl_mcp.infrastructure.audit.store import SQLiteAuditStore
 from h3c_hcl_mcp.infrastructure.settings import AuditSettings, HCLSettings
-from h3c_hcl_mcp.mcp.audit_middleware import with_audit
-from h3c_hcl_mcp.mcp.output_budget import with_output_budget
 from h3c_hcl_mcp.mcp.server import create_server
-from h3c_hcl_mcp.mcp.validation_middleware import wrap_call_tool_with_validation
+from h3c_hcl_mcp.mcp.validation_middleware import HCLFastMCP
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
 
 
@@ -74,30 +71,8 @@ async def _protocol_call(
     arguments: dict[str, Any],
 ) -> CallToolResult:
     """Call a FastMCP server through its registered JSON-RPC handler."""
-    client_send, server_receive = anyio.create_memory_object_stream[SessionMessage | Exception](10)
-    server_send, client_receive = anyio.create_memory_object_stream[SessionMessage](10)
-
-    result: CallToolResult | None = None
-    async with (
-        server_receive,
-        client_send,
-        client_receive,
-        server_send,
-        anyio.create_task_group() as task_group,
-    ):
-        task_group.start_soon(
-            mcp._mcp_server.run,
-            server_receive,
-            server_send,
-            mcp._mcp_server.create_initialization_options(),
-        )
-        async with ClientSession(client_receive, client_send) as client:
-            await client.initialize()
-            result = await client.call_tool(tool_name, arguments)
-        task_group.cancel_scope.cancel()
-
-    assert result is not None
-    return result
+    async with create_connected_server_and_client_session(mcp) as client:
+        return await client.call_tool(tool_name, arguments)
 
 
 def _error_from_result(result: CallToolResult) -> dict[str, Any]:
@@ -109,15 +84,17 @@ def _error_from_result(result: CallToolResult) -> dict[str, Any]:
 
 
 async def test_successful_tool_fails_closed_when_audit_append_is_unavailable() -> None:
-    server = FastMCP("audit-fail-closed-test")
     audit_sink = _FailingAuditSink()
+    server = HCLFastMCP(
+        "audit-fail-closed-test",
+        audit_sink=audit_sink,
+        max_output_bytes=1024,
+    )
 
     @server.tool(name="read_only_tool")
-    @with_audit("read_only_tool", audit_sink)
     async def read_only_tool() -> ToolResult:
         return ToolResult.success(request_id="req-audit-failure", data={"value": "read"})
 
-    wrap_call_tool_with_validation(server, audit_sink=audit_sink, max_output_bytes=1024)
     result = await _protocol_call(server, "read_only_tool", {})
 
     error = _error_from_result(result)
@@ -128,14 +105,17 @@ async def test_successful_tool_fails_closed_when_audit_append_is_unavailable() -
 
 
 async def test_validation_failure_reports_audit_unavailable_when_append_fails() -> None:
-    server = FastMCP("validation-audit-fail-closed-test")
     audit_sink = _FailingAuditSink()
+    server = HCLFastMCP(
+        "validation-audit-fail-closed-test",
+        audit_sink=audit_sink,
+        max_output_bytes=1024,
+    )
 
     @server.tool(name="validated_tool")
     async def validated_tool(count: int) -> dict[str, int]:
         return {"count": count}
 
-    wrap_call_tool_with_validation(server, audit_sink=audit_sink, max_output_bytes=1024)
     result = await _protocol_call(server, "validated_tool", {"count": "invalid"})
 
     error = _error_from_result(result)
@@ -197,14 +177,12 @@ async def test_validation_is_structured_on_registered_protocol_handler(
 
 
 async def test_validation_failure_uses_same_request_id_in_audit() -> None:
-    server = FastMCP("validation-audit-test")
     audit_sink = _MemoryAuditSink()
+    server = HCLFastMCP("validation-audit-test", audit_sink=audit_sink)
 
     @server.tool(name="validated_tool")
     async def validated_tool(source: Literal["running", "startup"] = "running") -> dict[str, str]:
         return {"source": source}
-
-    wrap_call_tool_with_validation(server, audit_sink=audit_sink)
 
     result = await _protocol_call(server, "validated_tool", {"source": "snapshot"})
 
@@ -219,9 +197,8 @@ async def test_validation_failure_uses_same_request_id_in_audit() -> None:
 
 
 async def test_unknown_tool_is_structured_and_audited() -> None:
-    server = FastMCP("unknown-tool-audit-test")
     audit_sink = _MemoryAuditSink()
-    wrap_call_tool_with_validation(server, audit_sink=audit_sink)
+    server = HCLFastMCP("unknown-tool-audit-test", audit_sink=audit_sink)
 
     result = await _protocol_call(server, "does_not_exist", {"project_id": "lab"})
 
@@ -241,23 +218,19 @@ async def test_unknown_tool_is_structured_and_audited() -> None:
 
 
 async def test_final_protocol_result_obeys_utf8_budget_and_keeps_both_channels() -> None:
-    server = FastMCP("output-budget-success-test")
     audit_sink = _MemoryAuditSink()
+    server = HCLFastMCP(
+        "output-budget-success-test",
+        audit_sink=audit_sink,
+        max_output_bytes=1024,
+    )
 
     @server.tool(name="bounded_tool")
-    @with_audit("bounded_tool", audit_sink)
-    @with_output_budget(1024)
     async def bounded_tool() -> ToolResult:
         return ToolResult.success(
             request_id="req-bounded",
             data={"status": "健康", "emoji": "✅"},
         )
-
-    wrap_call_tool_with_validation(
-        server,
-        audit_sink=audit_sink,
-        max_output_bytes=1024,
-    )
 
     result = await _protocol_call(server, "bounded_tool", {})
 
@@ -274,24 +247,20 @@ async def test_final_protocol_result_obeys_utf8_budget_and_keeps_both_channels()
 
 
 async def test_oversized_protocol_result_is_bounded_and_audited_as_error() -> None:
-    server = FastMCP("output-budget-error-test")
     audit_sink = _MemoryAuditSink()
+    server = HCLFastMCP(
+        "output-budget-error-test",
+        audit_sink=audit_sink,
+        max_output_bytes=1024,
+    )
 
     @server.tool(name="oversized_tool")
-    @with_audit("oversized_tool", audit_sink)
-    @with_output_budget(1024)
     async def oversized_tool() -> ToolResult:
         return ToolResult.success(
             request_id="req-oversized",
             data={"raw_output": "设备输出😀" * 2000},
             content_trust="untrusted_device_output",
         )
-
-    wrap_call_tool_with_validation(
-        server,
-        audit_sink=audit_sink,
-        max_output_bytes=1024,
-    )
 
     result = await _protocol_call(server, "oversized_tool", {})
 
@@ -306,10 +275,9 @@ async def test_oversized_protocol_result_is_bounded_and_audited_as_error() -> No
 
 
 async def test_oversized_unknown_name_and_target_are_bounded_in_error_and_audit() -> None:
-    server = FastMCP("output-budget-invalid-test")
     audit_sink = _MemoryAuditSink()
-    wrap_call_tool_with_validation(
-        server,
+    server = HCLFastMCP(
+        "output-budget-invalid-test",
         audit_sink=audit_sink,
         max_output_bytes=1024,
     )
@@ -334,18 +302,17 @@ async def test_oversized_unknown_name_and_target_are_bounded_in_error_and_audit(
 
 
 async def test_global_tool_timeout_is_structured_and_audited() -> None:
-    server = FastMCP("tool-timeout-audit-test")
     audit_sink = _MemoryAuditSink()
+    server = HCLFastMCP(
+        "tool-timeout-audit-test",
+        audit_sink=audit_sink,
+        timeout_seconds=0.01,
+    )
 
     @server.tool(name="slow_tool")
     async def slow_tool() -> dict[str, bool]:
         await anyio.sleep(0.2)
         return {"completed": True}
-
-    tool = server._tool_manager.get_tool("slow_tool")
-    assert tool is not None
-    tool.fn = with_audit("slow_tool", audit_sink)(tool.fn)
-    wrap_call_tool_with_validation(server, audit_sink=audit_sink, timeout_seconds=0.01)
 
     result = await _protocol_call(server, "slow_tool", {})
 

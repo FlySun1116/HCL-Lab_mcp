@@ -4,15 +4,15 @@
 
 - 候选版本：`0.1.0-beta.2`（未发布）
 - 分支：`codex/beta2-release-candidate`
-- 当前实现/CI 修复提交：`192fc41`
-- 当前证据基线：`192fc41` + 本文所在文档提交
-- beta.2 集成状态：安全/会话/制品边界修复完成；源码、双制品和 Draft PR 六项远端 CI 门禁全部通过；真实运行 HCL 的两条只读命令正向成功、`main` 保护规则和正式发布仍待外部条件/授权
-- 日期：2026-07-17
+- 当前分支基线：`da7747b` + 本文所在提交
+- 当前证据基线：本轮本地源码、双制品、安全/文档/依赖门禁；推送后以 Draft PR #4 新 CI run 为远端证据
+- beta.2 集成状态：项目文件、审计、日志、SDK 与供应链边界已加固；真实 HCL 只验证到项目/拓扑发现和“设备未运行”负向路径，未宣称两条 display 正向成功
+- 日期：2026-07-18
 - 发布状态：未创建 tag、GitHub Release 或 PyPI 包
 
 ## 目标 Issue/PR
 
-当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。候选 feature 分支已推送到 [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4)，六项远端 CI 已全部通过；merge、tag、Release、PyPI 和仓库保护规则变更仍需维护者授权。
+当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。候选集成到 [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4)；旧六项 CI 基线已通过，本轮新增 docs/security/CodeQL/release 供应链门禁需由推送后的新 run 验证。merge、tag、Release、PyPI 和仓库设置变更仍需维护者授权。
 
 ## 完成内容
 
@@ -47,8 +47,10 @@
 - Schema、领域和占位错误在响应与审计中复用同一 `request_id` 和真实错误码。
 - `AuditEvent.outcome` 与 `policy_result` 分离；旧 SQLite 表采用加列迁移，并把旧错误事件与非 UTC 时间戳规范化。
 - `audit.enabled=false` 使用空审计实现，不创建数据库。
+- `audit.retention_days` 已实际清理过期 SQLite 事件，取值限制为 1～365 天。
 - 审计开启时，写入失败会 fail closed，返回稳定 `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE`，不产生未审计成功。
 - 所有公共字符串字段都有长度上限；客户端控制的日志参数在输出前截断。
+- Tool 注册/调用/Schema 查询使用 FastMCP 公开扩展点；唯一 `_mcp_server` 版本桥集中在 `sdk_compat.py`，运行时仅接受 MCP 1.28.x，依赖锁定到 `mcp>=1.28.1,<1.29`。
 
 ### 安全、会话与 Tool
 
@@ -79,6 +81,9 @@
 - CI 的 checkout、setup-uv、upload-artifact、gitleaks 已升级到当前 Node 24 版本，并固定到完整 commit SHA；避免 Node 20 下线和可变 major tag 风险。
 - CI 对 `ResourceWarning`/`PytestUnraisableExceptionWarning` 零容忍；wheel/sdist 在干净 Python 3.12 环境仅依据各自包元数据解析依赖后运行同一 stdio 黑盒测试。
 - `scripts/check_distribution.py` 拒绝本地 Agent 状态、凭据/专有资产、链接、路径穿越、超大成员和缺失的许可证/审计 schema；sdist 不再包含 `.claude/settings.local.json`。
+- `.claude/settings.example.json`、七个角色定义和 `docs/agent-team-playbook.md` 固化 Agent Team 所有权、并行边界、Git 禁区与 human-required 动作。
+- `security.yml` 执行依赖/许可证/仓库资产/双制品/CodeQL 门禁；`docs.yml` 校验链接、结构化示例和 Action SHA；`release.yml` 只接受 main 上 GitHub 验证的签名 tag，并在 PyPI environment 显式开关、OIDC Trusted Publishing、SBOM/provenance 成功后创建 Release。
+- GitHub Private Vulnerability Reporting 当前仍为 disabled；启用它、配置 `pypi` environment 和 `PYPI_RELEASE_ENABLED` 属维护者仓库设置动作。
 
 ## 修改文件
 
@@ -93,8 +98,8 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 - `src/h3c_hcl_mcp/mcp/`
 - `tests/contract/`、`tests/unit/`、`tests/integration/`、脱敏 fixtures
 - `README.md`、`CHANGELOG.md`、`docs/`、`config/`、`examples/`
-- `.github/ISSUE_TEMPLATE/`、`.github/pull_request_template.md`、`.github/workflows/ci.yml`
-- `.gitignore`、`scripts/check_distribution.py`
+- `.github/ISSUE_TEMPLATE/`、`.github/pull_request_template.md`、`.github/workflows/`
+- `.claude/`、`.gitignore`、`scripts/check_distribution.py`、`scripts/check_docs.py`、`scripts/check_repository.py`
 - `pyproject.toml`、`uv.lock`、版本模块
 
 ## 关键决策/ADR
@@ -123,23 +128,24 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## 执行的测试与精确结果
 
-以下结果来自 `192fc41` 实现、本文档收口后的最终本地候选和 Draft PR #4：
+以下结果来自 2026-07-18 本轮本地候选；远端结果以推送后的 Draft PR #4 新 run 为准：
 
 | 检查 | 最终结果 | 说明 |
 |---|---|---|
-| `uv sync --locked --extra dev` | 通过 | 锁定 51 个包 |
+| `uv sync --locked --extra dev` | 通过 | 锁定环境检查 78 个包，`uv pip check` 无冲突 |
 | `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
-| `uv run --locked ruff format --check .` | 通过 | 102 个文件格式合格 |
-| `uv run --locked mypy src` | 通过 | 69 个源文件无类型错误 |
-| `uv run --locked mypy --platform linux src` | 通过 | Linux typeshed 平台下 69 个源文件无类型错误 |
-| 严格 warning + coverage 全量测试 | 通过 | **651 passed in 61.47s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过 | **87.19%**；3,763 statements / 482 missed，门槛 85% |
+| `uv run --locked ruff format --check .` | 通过 | 110 个文件格式合格 |
+| `uv run --locked mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py` | 通过 | 73 个源/脚本文件无类型错误 |
+| 严格 warning + coverage 全量测试 | 通过 | **734 passed、3 skipped in 65.23s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过 | **87.18%**；3,853 statements / 494 missed，门槛 85% |
+| 文档/结构化示例 | 通过 | 29 个 Markdown、24 个内部链接、10 个 JSON/YAML 示例；workflow Action 均固定 40 位 SHA |
+| 依赖/许可证 | 通过 | `pip-audit` 无已知漏洞；GPL/AGPL deny gate 通过 |
 | `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖；版本/entry point 断言通过，官方 stdio **7 passed in 9.91s** |
-| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖；版本/entry point 断言通过，官方 stdio **7 passed in 9.95s** |
-| 制品内容策略 | 通过 | wheel 76 members、sdist 156 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
+| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 11.45s** |
+| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 11.06s** |
+| 制品内容策略 | 通过 | wheel 77 members、sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
 | Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
-| GitHub Actions | 通过 | [CI run 29567692684](https://github.com/FlySun1116/HCL-Lab_mcp/actions/runs/29567692684) 的 Linux quality/contracts/full、Windows full/package 和 secret scan 共 6 项全部通过 |
+| GitHub Actions | 待刷新 | 旧六项 CI 基线通过；新增 docs/security/CodeQL workflow 待本轮推送验证 |
 | `git diff --check` | 通过 | 无空白错误 |
 
 制品 stdio 场景在仓库外工作目录运行并清除 `PYTHONPATH`，精确断言 15 个 Tool、对全部公开 Tool 做最小调用，并验证本轮审计事件的非空过滤查询。
@@ -157,16 +163,18 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 2. beta.2 本地制品已构建但尚未发布 PyPI；文档和示例必须使用源码虚拟环境，不可宣称 `uvx h3c-hcl-mcp` 已可用。
 3. `h3c_diff_config`、Job 创建、SSH、NETCONF、HTTP 和所有写操作尚未实现。
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
-5. Draft PR #4 的六项 GitHub Actions 已全部通过；但 GitHub API 对 `main` protection 查询返回 404 `Branch not protected`，当前成功检查不会被 required checks 强制执行。
+5. Draft PR #4 的旧六项 GitHub Actions 已全部通过，本轮新增门禁需刷新；GitHub API 对 `main` protection 查询返回 404 `Branch not protected`，成功检查不会被 required checks 强制执行。
 6. 候选 feature 分支和 Draft PR 均已就绪；启用 `main` 分支保护属于仓库治理变更，需维护者明确授权。
 7. Claude Code 隔离连接已通过；Claude Desktop 和 Cursor 仍缺真实 UI 级连接记录。Cursor 3.11.25 的隔离 CLI 尝试在进入 MCP 前因自身 Windows `MachineGuid` 查询失败退出，未创建临时 profile、未留下进程，不能归因于 Server。
+8. Private Vulnerability Reporting 当前关闭，`pypi` environment/Trusted Publisher/显式发布开关尚未由维护者配置。
 
 ## 下一阶段任务
 
 1. 请维护者在 HCL GUI 打开目标项目并启动只读测试设备；只执行两条允许的 display 命令。
-2. 请维护者决定是否为 `main` 启用 branch protection，并把六项 CI 中的发布门禁设为 required checks。
+2. 请维护者决定是否为 `main` 启用 branch protection，并把 CI、docs、security/CodeQL 和 package 门禁设为 required checks。
 3. 在 Claude Desktop 与 Cursor GUI 各完成一次 15-Tool 发现和 `server_health` 调用记录。
-4. 正向 HCL 和客户端证据通过后给出公开发布决策；merge、tag、Release、PyPI 仍需维护者授权。
+4. 启用 Private Vulnerability Reporting，配置受保护的 `pypi` environment 与 Trusted Publisher；这些仓库设置需维护者明确授权。
+5. 正向 HCL 和客户端证据通过后给出公开发布决策；merge、tag、Release、PyPI 仍需维护者授权。
 
 ## 接管所需命令
 
@@ -176,6 +184,8 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
 uv run pytest -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning --cov=h3c_hcl_mcp --cov-report=term-missing --cov-fail-under=85
+uv run python scripts/check_docs.py .
+uv run python scripts/check_repository.py .
 uv build --clear
 uv run python scripts/check_distribution.py dist
 ```

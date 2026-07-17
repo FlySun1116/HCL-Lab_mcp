@@ -33,6 +33,7 @@ from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.infrastructure.audit.store import NullAuditStore, SQLiteAuditStore
 from h3c_hcl_mcp.infrastructure.policy.engine import PolicyEngineImpl
 from h3c_hcl_mcp.infrastructure.settings import HCLSettings
+from h3c_hcl_mcp.mcp.sdk_compat import set_fastmcp_server_version
 from h3c_hcl_mcp.mcp.tools import (
     audit,
     h3c_read,
@@ -41,6 +42,7 @@ from h3c_hcl_mcp.mcp.tools import (
     health,
     jobs,
 )
+from h3c_hcl_mcp.mcp.validation_middleware import HCLFastMCP
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
 from h3c_hcl_mcp.ports.command_parser import CommandParser
 from h3c_hcl_mcp.ports.device_transport import DeviceTransport
@@ -153,39 +155,6 @@ class _PlaceholderJobStore(JobStore):
 
 
 # ---------------------------------------------------------------------------
-# Audit middleware wiring
-# ---------------------------------------------------------------------------
-
-
-def _wrap_tools_with_audit(mcp: FastMCP, audit_sink: AuditSink) -> None:
-    """Wrap all registered tool functions with audit recording.
-
-    After this call, every tool invocation will be recorded to the audit sink.
-    """
-    from h3c_hcl_mcp.mcp.audit_middleware import with_audit
-
-    wrapped = 0
-    for tool_name, tool in mcp._tool_manager._tools.items():
-        if hasattr(tool, "fn"):
-            tool.fn = with_audit(tool_name, audit_sink)(tool.fn)
-            wrapped += 1
-    logger.info("Audit middleware wrapped %d tools.", wrapped)
-
-
-def _wrap_tools_with_output_budget(mcp: FastMCP, max_bytes: int) -> None:
-    """Place the final result budget inside the outer audit wrapper."""
-
-    from h3c_hcl_mcp.mcp.output_budget import with_output_budget
-
-    wrapped = 0
-    for tool in mcp._tool_manager._tools.values():
-        if hasattr(tool, "fn"):
-            tool.fn = with_output_budget(max_bytes)(tool.fn)
-            wrapped += 1
-    logger.info("Output budget wrapped %d tools at %d bytes.", wrapped, max_bytes)
-
-
-# ---------------------------------------------------------------------------
 # Server factory
 # ---------------------------------------------------------------------------
 
@@ -276,7 +245,10 @@ def create_server(
     policy_engine: PolicyEngine = PolicyEngineImpl(settings=settings.policy)
     if settings.audit.enabled:
         audit_db = settings.audit.database if settings.audit.database else None
-        audit_sink: AuditSink = SQLiteAuditStore(db_path=audit_db)
+        audit_sink: AuditSink = SQLiteAuditStore(
+            db_path=audit_db,
+            retention_days=settings.audit.retention_days,
+        )
     else:
         audit_sink = NullAuditStore()
     # Placeholder (standalone is fine for v0.1)
@@ -300,7 +272,7 @@ def create_server(
         finally:
             await session_manager.close_all()
 
-    mcp = FastMCP(
+    mcp = HCLFastMCP(
         name=settings.server.name,
         instructions=(
             "HCL-Lab MCP Server provides discovery, monitoring, and CLI access "
@@ -309,10 +281,12 @@ def create_server(
             "runtime state, and Comware CLI display/diagnostic commands."
         ),
         lifespan=server_lifespan,
+        audit_sink=audit_sink,
+        timeout_seconds=settings.server.max_tool_seconds,
+        max_output_bytes=settings.server.max_tool_result_bytes,
     )
 
-    # Set serverInfo.version for MCP initialize response
-    mcp._mcp_server.version = VERSION
+    set_fastmcp_server_version(mcp, VERSION)
 
     # Register all tool modules with injected dependencies
     health.register(mcp, **adapters, server_name=settings.server.name)
@@ -327,23 +301,6 @@ def create_server(
     # h3c_change.register(mcp, **adapters)  # v0.2 tools — disabled in v0.1
     jobs.register(mcp, **adapters)
     audit.register(mcp, **adapters)
-
-    # --- Wrap call_tool with validation error reformatting (BUG-014) ---
-    from h3c_hcl_mcp.mcp.validation_middleware import wrap_call_tool_with_validation
-
-    wrap_call_tool_with_validation(
-        mcp,
-        audit_sink=audit_sink,
-        timeout_seconds=settings.server.max_tool_seconds,
-        max_output_bytes=settings.server.max_tool_result_bytes,
-    )
-
-    # The budget is inside audit so an oversized result is recorded as an
-    # invocation error rather than a successful call whose response vanished.
-    _wrap_tools_with_output_budget(mcp, settings.server.max_tool_result_bytes)
-
-    # --- Wrap all tools with audit middleware (BUG-009) ---
-    _wrap_tools_with_audit(mcp, audit_sink)
 
     real_count = sum(1 for v in adapters.values() if not isinstance(v, _PlaceholderJobStore))
     logger.info(

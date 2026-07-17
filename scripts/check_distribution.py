@@ -28,17 +28,55 @@ _FORBIDDEN_NAMES = {
     "settings.local.json",
 }
 _FORBIDDEN_SUFFIXES = {
+    ".bin",
+    ".chm",
     ".dll",
     ".exe",
+    ".img",
+    ".iso",
     ".key",
     ".ova",
     ".ovf",
     ".p12",
+    ".pdf",
     ".pem",
     ".pfx",
+    ".qcow",
+    ".qcow2",
     ".vdi",
     ".vmdk",
 }
+_SDIST_ROOT_FILES = {
+    ".gitignore",
+    "CHANGELOG.md",
+    "CLAUDE.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "GOVERNANCE.md",
+    "LICENSE",
+    "NOTICE",
+    "PKG-INFO",
+    "README.md",
+    "SECURITY.md",
+    "pyproject.toml",
+    "uv.lock",
+}
+_SDIST_TEXT_SUFFIXES = {
+    ".json",
+    ".md",
+    ".py",
+    ".pyi",
+    ".rst",
+    ".sql",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+_SDIST_SPECIAL_NAMES = {"CODEOWNERS"}
+_SYNTHETIC_FIXTURE_SUFFIXES = {".cfg", ".json", ".net", ".txt"}
+_SDIST_ALLOWED_DIRS = {".github", "config", "docs", "examples", "scripts", "src", "tests"}
+_WHEEL_PACKAGE_SUFFIXES = {".py", ".pyi", ".sql"}
+_WHEEL_DIST_INFO_NAMES = {"LICENSE", "METADATA", "NOTICE", "RECORD", "WHEEL", "entry_points.txt"}
 
 
 @dataclass(frozen=True)
@@ -46,17 +84,26 @@ class ArchiveMember:
     name: str
     size: int
     is_link: bool = False
+    is_dir: bool = False
 
 
 def _wheel_members(path: Path) -> list[ArchiveMember]:
     with zipfile.ZipFile(path) as archive:
-        return [ArchiveMember(item.filename, item.file_size) for item in archive.infolist()]
+        return [
+            ArchiveMember(item.filename, item.file_size, is_dir=item.is_dir()) for item in archive.infolist()
+        ]
 
 
 def _sdist_members(path: Path) -> list[ArchiveMember]:
     with tarfile.open(path, mode="r:gz") as archive:
         return [
-            ArchiveMember(item.name, item.size, item.issym() or item.islnk()) for item in archive.getmembers()
+            ArchiveMember(
+                item.name,
+                item.size,
+                is_link=item.issym() or item.islnk(),
+                is_dir=item.isdir(),
+            )
+            for item in archive.getmembers()
         ]
 
 
@@ -80,10 +127,70 @@ def _validate_member(member: ArchiveMember) -> None:
         raise ValueError(f"archive member exceeds {_MAX_MEMBER_BYTES} bytes: {name}")
 
 
+def _validate_wheel_layout(member: ArchiveMember) -> None:
+    path = PurePosixPath(member.name)
+    if not path.parts:
+        raise ValueError("empty wheel member path")
+    top_level = path.parts[0]
+    if top_level == "h3c_hcl_mcp":
+        if member.is_dir:
+            return
+        if path.name == "py.typed" or path.suffix.casefold() in _WHEEL_PACKAGE_SUFFIXES:
+            return
+        raise ValueError(f"wheel package member type is not allowlisted: {member.name}")
+    if top_level.startswith("h3c_hcl_mcp-") and top_level.endswith(".dist-info"):
+        if member.is_dir:
+            return
+        if path.name in _WHEEL_DIST_INFO_NAMES:
+            return
+        raise ValueError(f"wheel metadata member is not allowlisted: {member.name}")
+    raise ValueError(f"wheel top-level path is not allowlisted: {member.name}")
+
+
+def _validate_sdist_layout(member: ArchiveMember) -> None:
+    path = PurePosixPath(member.name)
+    if not path.parts or not path.parts[0].startswith("h3c_hcl_mcp-"):
+        raise ValueError(f"sdist root is not allowlisted: {member.name}")
+    if len(path.parts) == 1:
+        if member.is_dir:
+            return
+        raise ValueError(f"sdist member must be below its versioned root: {member.name}")
+
+    relative = PurePosixPath(*path.parts[1:])
+    if len(relative.parts) == 1:
+        if member.is_dir or relative.name in _SDIST_ROOT_FILES:
+            return
+        raise ValueError(f"sdist root member is not allowlisted: {member.name}")
+
+    top_level = relative.parts[0]
+    if top_level not in _SDIST_ALLOWED_DIRS:
+        raise ValueError(f"sdist top-level path is not allowlisted: {member.name}")
+    if member.is_dir:
+        return
+
+    if len(relative.parts) >= 2 and relative.parts[:2] == ("tests", "fixtures"):
+        if relative.suffix.casefold() in _SYNTHETIC_FIXTURE_SUFFIXES:
+            return
+        raise ValueError(f"synthetic fixture type is not allowlisted: {member.name}")
+
+    if (
+        relative.name == "py.typed"
+        or relative.name in _SDIST_SPECIAL_NAMES
+        or relative.suffix.casefold() in _SDIST_TEXT_SUFFIXES
+    ):
+        return
+    raise ValueError(f"sdist member type is not allowlisted: {member.name}")
+
+
 def validate_archive(path: Path, members: Iterable[ArchiveMember]) -> int:
     member_list = list(members)
+    is_wheel = path.suffix.casefold() == ".whl"
     for member in member_list:
         _validate_member(member)
+        if is_wheel:
+            _validate_wheel_layout(member)
+        else:
+            _validate_sdist_layout(member)
 
     names = [PurePosixPath(member.name).name for member in member_list]
     required = {"LICENSE", "NOTICE", "schema.sql"}

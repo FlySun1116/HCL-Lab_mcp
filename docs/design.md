@@ -325,6 +325,7 @@ HCL-Lab_mcp/
 ├─ .claude/
 │  ├─ settings.example.json        # Agent Team opt-in 与安全 hooks 示例
 │  └─ agents/
+│     ├─ team-lead.md
 │     ├─ contract-architect.md
 │     ├─ mcp-api-engineer.md
 │     ├─ hcl-adapter-engineer.md
@@ -370,6 +371,8 @@ HCL-Lab_mcp/
 │     │  └─ job_service.py
 │     ├─ mcp/
 │     │  ├─ server.py              # 唯一 Composition Root
+│     │  ├─ validation_middleware.py # 稳定 call/register 边界
+│     │  ├─ sdk_compat.py           # SDK 私有兼容点唯一隔离层
 │     │  ├─ error_mapping.py
 │     │  ├─ tools/
 │     │  │  ├─ health.py
@@ -435,8 +438,9 @@ HCL-Lab_mcp/
 │     ├─ synthetic_projects/      # 自造数据，不复制 HCL 内容
 │     └─ device_outputs/
 └─ scripts/
-   ├─ check_compatibility.py
-   └─ generate_sbom.py
+   ├─ check_docs.py
+   ├─ check_repository.py
+   └─ check_distribution.py
 ```
 
 依赖方向固定为 `mcp → application → ports ← adapters/infrastructure`，`domain` 位于最内层。只有 `mcp/server.py` 可以实例化并装配具体 adapter。任何 Tool 都不能直接读文件、连 Telnet 或执行命令。
@@ -450,7 +454,7 @@ HCL-Lab_mcp/
 ### 7.1 语言与 MCP SDK
 
 - **Python 3.12**：Windows 兼容良好，异步网络和文本解析生态成熟；不要复用 HCL 自带的 Python 3.8 运行时。
-- **官方 MCP Python SDK**：截至 2026-07-15，v1.x 仍是生产稳定线，建议锁定 `mcp>=1.28,<2`；v2 仍是预发布，待稳定后通过 ADR 评估升级。
+- **官方 MCP Python SDK**：beta.2 锁定 `mcp>=1.28.1,<1.29`。Tool 注册/调用使用公开 `add_tool`、`call_tool` 和 `list_tools`；FastMCP 未公开的 server version 设置只允许出现在 `mcp/sdk_compat.py`，并由运行时结构守卫与官方 stdio 测试保护。任何 SDK patch/minor 升级都必须重跑完整协议门禁。
 - **Pydantic v2**：定义输入、输出和配置 Schema，使 MCP 工具返回结构化结果。
 - **uv**：依赖锁定、开发运行、构建和干净环境验证；PyPI 发布完成后再提供 `uvx` 分发。
 
@@ -1104,7 +1108,7 @@ h3c_hcl_mcp.approval_providers
 | Comware 输出随版本/语言变化 | capability 矩阵、模板版本化、解析失败回退 raw |
 | HCL 专有资产误入开源包 | 合成 fixtures、CI 大文件/Secret/许可证扫描、发布内容 allowlist |
 | HCL 内部服务对外监听 | 明确防火墙基线；MCP 仅连 loopback，绝不代理这些端口 |
-| MCP SDK 正处于 v1→v2 过渡期 | v1 稳定线锁 `<2`；通过 ADR 和合约测试升级 v2 |
+| MCP SDK 正处于 v1→v2 过渡期 | beta.2 锁定已验证的 1.28.x；私有 version 桥单点隔离，升级任何 SDK 版本前通过 ADR、结构守卫和完整 stdio 合约测试 |
 | Agent Team 共享工作树导致文件覆盖 | 每任务明确 Owned files；同文件顺序执行；跨 Issue 使用独立 worktree |
 | Agent Team 属实验能力且本地状态不可持续 | GitHub Issue、提交和 CI 为事实来源；异常时回退到独立 Claude session |
 | 空仓库一次性引入过多内容难以审核 | 治理 bootstrap、工程 skeleton、垂直切片分成三个连续 PR/提交阶段 |

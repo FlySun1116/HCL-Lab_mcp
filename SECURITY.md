@@ -31,7 +31,7 @@ The HCL-Lab MCP Server operates under a **default-deny, read-only-first** securi
 
 **Please do NOT file a public GitHub Issue for security vulnerabilities.**
 
-Email the maintainer directly with details. We aim to acknowledge within 48 hours and provide an initial assessment within 5 business days.
+Use GitHub's [private vulnerability report](https://github.com/FlySun1116/HCL-Lab_mcp/security/advisories/new). If GitHub reports that private reporting is unavailable, do not include vulnerability details in an Issue; contact the [maintainer profile](https://github.com/FlySun1116) only to request a private channel. Enabling Private Vulnerability Reporting is a formal release prerequisite. We aim to acknowledge a complete private report within 48 hours and provide an initial assessment within 5 business days.
 
 ### Coordinated Disclosure
 

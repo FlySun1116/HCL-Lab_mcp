@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
 from h3c_hcl_mcp.adapters.hcl.project_repository import (
+    MAX_PROJECT_JSON_BYTES,
     HCLProjectRepository,
     _find_net_file,
     _get_file_mtime,
@@ -30,6 +32,13 @@ class TestValidateProjectPath:
         with pytest.raises(DomainError) as exc:
             _validate_project_path("../etc")
         assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    def test_traversal_error_does_not_expose_absolute_root(self, tmp_path: Path):
+        unsafe = str(tmp_path / "safe" / ".." / "outside")
+        with pytest.raises(DomainError) as exc:
+            _validate_project_path(unsafe)
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(tmp_path) not in str(exc.value)
 
     @pytest.mark.parametrize(
         "project_id",
@@ -69,6 +78,118 @@ class TestReadProjectJson:
             _read_project_json(str(tmp_path))
         assert exc.value.code == ErrorCode.PROJECT_NOT_FOUND
 
+    def test_oversized_project_json_is_rejected_before_parsing(self, tmp_path: Path):
+        project_dir = tmp_path / "oversized_project"
+        project_dir.mkdir()
+        json_path = project_dir / "project.json"
+        with json_path.open("wb") as file:
+            file.truncate(MAX_PROJECT_JSON_BYTES + 1)
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_DAMAGED
+        assert exc.value.details == {"file": "project.json", "max_bytes": MAX_PROJECT_JSON_BYTES}
+        assert str(tmp_path) not in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "config_path",
+        [
+            "../outside.cfg",
+            r"..\outside.cfg",
+            "/outside.cfg",
+            r"C:\outside.cfg",
+            r"\\server\share\outside.cfg",
+            r"DeviceConfig\..\outside.cfg",
+            "DeviceConfig/../../outside.cfg",
+        ],
+    )
+    def test_config_snapshot_escape_is_rejected(self, tmp_path: Path, config_path: str):
+        project_dir = tmp_path / "unsafe_config_project"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": project_dir.name,
+                    "name": "Unsafe Config",
+                    "devices": [{"id": 1, "name": "S1", "configPath": config_path}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(tmp_path) not in str(exc.value)
+        assert exc.value.details == {"file": "config snapshot"}
+
+    def test_absolute_native_config_snapshot_is_rejected(self, tmp_path: Path):
+        project_dir = tmp_path / "absolute_config_project"
+        project_dir.mkdir()
+        outside = tmp_path / "outside.cfg"
+        (project_dir / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": project_dir.name,
+                    "name": "Absolute Config",
+                    "devices": [{"id": 1, "name": "S1", "configPath": str(outside.resolve())}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(exc.value)
+
+    def test_config_snapshot_symlink_escape_is_rejected_when_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "linked_config_project"
+        config_dir = project_dir / "DeviceConfig"
+        config_dir.mkdir(parents=True)
+        outside = tmp_path / "outside.cfg"
+        outside.write_text("sysname outside", encoding="utf-8")
+        link = config_dir / "S1.cfg"
+        try:
+            link.symlink_to(outside)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks are unavailable: {exc}")
+        (project_dir / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": project_dir.name,
+                    "name": "Linked Config",
+                    "devices": [{"id": 1, "name": "S1", "configPath": "DeviceConfig/S1.cfg"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(exc.value)
+
+    def test_project_json_symlink_escape_is_rejected_when_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "linked_json_project"
+        project_dir.mkdir()
+        outside = tmp_path / "outside.json"
+        outside.write_text('{"id": "linked_json_project"}', encoding="utf-8")
+        try:
+            (project_dir / "project.json").symlink_to(outside)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks are unavailable: {exc}")
+
+        with pytest.raises(DomainError) as caught:
+            _read_project_json(str(project_dir))
+
+        assert caught.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(caught.value)
+
 
 class TestFindNetFile:
     """Test finding .net topology files."""
@@ -86,6 +207,22 @@ class TestFindNetFile:
         with pytest.raises(DomainError) as exc:
             _find_net_file("../etc")
         assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    def test_net_symlink_escape_is_rejected_when_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "linked_net_project"
+        project_dir.mkdir()
+        outside = tmp_path / "outside.net"
+        outside.write_text("version = 5.10.3", encoding="utf-8")
+        try:
+            (project_dir / "linked.net").symlink_to(outside)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks are unavailable: {exc}")
+
+        with pytest.raises(DomainError) as caught:
+            _find_net_file(str(project_dir))
+
+        assert caught.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(caught.value)
 
 
 class TestGetFileMtime:

@@ -13,7 +13,11 @@ import os
 import re
 from datetime import UTC, datetime
 
-from h3c_hcl_mcp.adapters.hcl.net_parser import NetDeviceEntry, parse_net_file
+from h3c_hcl_mcp.adapters.hcl.net_parser import (
+    NetDeviceEntry,
+    _validate_net_file_size,
+    parse_net_file,
+)
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
 from h3c_hcl_mcp.domain.project import DeviceRef, LabProject, Link, Topology
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
@@ -21,17 +25,22 @@ from h3c_hcl_mcp.ports.project_repository import ProjectRepository
 logger = logging.getLogger(__name__)
 
 
+# project.json contains only project metadata and device descriptors.  Sixteen
+# MiB accommodates large HCL labs without allowing an untrusted project to
+# trigger an unbounded JSON read.
+MAX_PROJECT_JSON_BYTES = 16 * 1024 * 1024
+
+
 def _validate_project_path(project_dir: str) -> None:
-    """Validate that a project directory path is safe.
+    """Reject explicit parent traversal without exposing the configured root.
 
     Raises:
-        DomainError(PROJECT_PATH_TRAVERSAL): path contains traversal or is absolute.
+        DomainError(PROJECT_PATH_TRAVERSAL): path contains a parent component.
     """
-    if ".." in project_dir:
+    if ".." in re.split(r"[\\/]", project_dir):
         raise DomainError(
             code=ErrorCode.PROJECT_PATH_TRAVERSAL,
-            message=f"Path traversal detected in project path: {project_dir!r}",
-            details={"path": project_dir},
+            message="Path traversal detected in project path",
         )
 
 
@@ -70,6 +79,75 @@ def _resolve_project_dir(projects_dir: str, project_id: str) -> str:
     return candidate
 
 
+def _resolve_project_reference(project_dir: str, reference: str, *, label: str) -> str:
+    """Resolve an untrusted metadata file reference below ``project_dir``.
+
+    HCL emits Windows-style relative paths even when tests run elsewhere, so
+    both slash styles are normalized.  ``realpath``/``commonpath`` also reject
+    existing symlink and Windows junction escapes.
+    """
+    raw_reference = reference.strip()
+    if not raw_reference or "\x00" in raw_reference:
+        raise DomainError(
+            code=ErrorCode.PROJECT_PATH_TRAVERSAL,
+            message=f"Invalid {label} reference",
+            details={"file": label},
+        )
+    if (
+        raw_reference.startswith(("/", "\\"))
+        or os.path.isabs(raw_reference)
+        or ntpath.isabs(raw_reference)
+        or bool(ntpath.splitdrive(raw_reference)[0])
+    ):
+        raise DomainError(
+            code=ErrorCode.PROJECT_PATH_TRAVERSAL,
+            message=f"Absolute {label} reference is not allowed",
+            details={"file": label},
+        )
+
+    raw_parts = re.split(r"[\\/]", raw_reference)
+    if any(part == ".." or ":" in part for part in raw_parts):
+        raise DomainError(
+            code=ErrorCode.PROJECT_PATH_TRAVERSAL,
+            message=f"Unsafe {label} reference is not allowed",
+            details={"file": label},
+        )
+    parts = [part for part in raw_parts if part not in {"", "."}]
+    if not parts:
+        raise DomainError(
+            code=ErrorCode.PROJECT_PATH_TRAVERSAL,
+            message=f"Invalid {label} reference",
+            details={"file": label},
+        )
+
+    root = os.path.realpath(os.path.abspath(project_dir))
+    candidate = os.path.realpath(os.path.abspath(os.path.join(root, *parts)))
+    try:
+        inside_project = os.path.commonpath((root, candidate)) == root
+    except ValueError:
+        inside_project = False
+    if not inside_project:
+        raise DomainError(
+            code=ErrorCode.PROJECT_PATH_TRAVERSAL,
+            message=f"{label.capitalize()} reference is outside the project",
+            details={"file": label},
+        )
+    return candidate
+
+
+def _validate_metadata_references(data: dict[str, object], project_dir: str) -> None:
+    """Validate every file reference exposed by normalized project metadata."""
+    devices = data.get("devices", [])
+    if not isinstance(devices, list):
+        return
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        config_path = str(device.get("configPath") or "").strip()
+        if config_path:
+            _resolve_project_reference(project_dir, config_path, label="config snapshot")
+
+
 def _read_project_json(project_dir: str) -> dict[str, object]:
     """Read and parse project.json from a project directory.
 
@@ -79,28 +157,42 @@ def _read_project_json(project_dir: str) -> dict[str, object]:
     """
     _validate_project_path(project_dir)
 
-    json_path = os.path.join(project_dir, "project.json")
+    json_path = _resolve_project_reference(project_dir, "project.json", label="project.json")
     if not os.path.isfile(json_path):
         raise DomainError(
             code=ErrorCode.PROJECT_NOT_FOUND,
-            message=f"project.json not found in {project_dir!r}",
-            details={"path": json_path},
+            message="project.json not found",
+            details={"file": "project.json"},
         )
 
     try:
-        with open(json_path, encoding="utf-8") as f:
-            data = json.load(f)
+        size = os.path.getsize(json_path)
+        if size > MAX_PROJECT_JSON_BYTES:
+            raise DomainError(
+                code=ErrorCode.PROJECT_DAMAGED,
+                message="project.json exceeds the supported size limit",
+                details={"file": "project.json", "max_bytes": MAX_PROJECT_JSON_BYTES},
+            )
+        with open(json_path, "rb") as file:
+            raw = file.read(MAX_PROJECT_JSON_BYTES + 1)
+        if len(raw) > MAX_PROJECT_JSON_BYTES:
+            raise DomainError(
+                code=ErrorCode.PROJECT_DAMAGED,
+                message="project.json exceeds the supported size limit",
+                details={"file": "project.json", "max_bytes": MAX_PROJECT_JSON_BYTES},
+            )
+        data = json.loads(raw.decode("utf-8"))
     except json.JSONDecodeError as e:
         raise DomainError(
             code=ErrorCode.PROJECT_DAMAGED,
             message=f"Invalid JSON in project.json: {e}",
-            details={"path": json_path},
+            details={"file": "project.json"},
         ) from e
-    except OSError as e:
+    except (OSError, UnicodeError) as e:
         raise DomainError(
             code=ErrorCode.PROJECT_DAMAGED,
-            message=f"Cannot read project.json: {e}",
-            details={"path": json_path},
+            message="Cannot read project.json",
+            details={"file": "project.json"},
         ) from e
 
     # Basic structural validation
@@ -108,22 +200,23 @@ def _read_project_json(project_dir: str) -> dict[str, object]:
         raise DomainError(
             code=ErrorCode.PROJECT_DAMAGED,
             message="project.json must contain a JSON object",
-            details={"path": json_path},
+            details={"file": "project.json"},
         )
 
     # Normalize to internal format — supports both:
     # 1. Real HCL 5.10.3: {"projectInfo": {...}, "deviceInfoList": [...]}
     # 2. Synthetic/test:  {"id": "...", "name": "...", "devices": [...]}
     fallback_id = os.path.basename(os.path.normpath(project_dir))
-    data = _normalize_project_json(data, json_path, fallback_id=fallback_id)
+    data = _normalize_project_json(data, "project.json", fallback_id=fallback_id)
 
     if "id" not in data:
         raise DomainError(
             code=ErrorCode.PROJECT_DAMAGED,
             message="project.json missing required project identifier",
-            details={"path": json_path},
+            details={"file": "project.json"},
         )
 
+    _validate_metadata_references(data, project_dir)
     return data
 
 
@@ -211,7 +304,7 @@ def _find_net_file(project_dir: str) -> str | None:
         with os.scandir(project_dir) as entries:
             for entry in entries:
                 if entry.is_file() and entry.name.endswith(".net"):
-                    return entry.path
+                    return _resolve_project_reference(project_dir, entry.name, label=".net topology")
     except OSError:
         pass
 
@@ -232,10 +325,11 @@ def _read_net_version(project_dir: str) -> str | None:
     net_file = _find_net_file(project_dir)
     if net_file is None:
         return None
+    _validate_net_file_size(net_file)
     try:
         with open(net_file, encoding="utf-8-sig") as file:
             for _ in range(10):
-                line = file.readline()
+                line = file.readline(4096)
                 if not line:
                     break
                 match = re.match(r"^\s*version\s*=\s*(\S+)\s*$", line, re.IGNORECASE)
@@ -423,7 +517,7 @@ class HCLProjectRepository(ProjectRepository):
             raise DomainError(
                 code=ErrorCode.PROJECT_DAMAGED,
                 message="project.json 'devices' field must be an array",
-                details={"path": os.path.join(project_dir, "project.json")},
+                details={"file": "project.json"},
             )
 
         # Build name→device map from project.json

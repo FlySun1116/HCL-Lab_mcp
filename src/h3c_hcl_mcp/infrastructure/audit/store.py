@@ -1,6 +1,7 @@
 """AuditSink implementation — SQLite-backed audit trail.
 
-All tool invocations are recorded as append-only audit events.
+All tool invocations are recorded as append-only events inside the configured
+retention window; expired events are purged by UTC timestamp.
 Supports querying by request_id, tool, device, and time range.
 Thread-safe via WAL journal mode.
 """
@@ -12,7 +13,7 @@ import logging
 import sqlite3
 import threading
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -56,8 +57,11 @@ class SQLiteAuditStore(AuditSink):
     All write operations are protected by a threading.Lock.
     """
 
-    def __init__(self, db_path: str | None = None) -> None:
+    def __init__(self, db_path: str | None = None, *, retention_days: int = 90) -> None:
         import sys
+
+        if not 1 <= retention_days <= 365:
+            raise ValueError("retention_days must be between 1 and 365")
 
         if db_path is None:
             if sys.platform == "win32":
@@ -85,6 +89,7 @@ class SQLiteAuditStore(AuditSink):
 
         db_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = str(db_file)
+        self._retention_days = retention_days
         self._lock = threading.Lock()
         self._init_db()
         logger.info("Audit store initialized at %s", self._db_path)
@@ -123,7 +128,13 @@ class SQLiteAuditStore(AuditSink):
                         "UPDATE audit_events SET timestamp = ? WHERE event_id = ?",
                         (normalized, row[0]),
                     )
+            self._purge_expired(conn)
             conn.commit()
+
+    def _purge_expired(self, conn: sqlite3.Connection) -> None:
+        """Delete events outside the configured UTC retention window."""
+        cutoff = datetime.now(UTC) - timedelta(days=self._retention_days)
+        conn.execute("DELETE FROM audit_events WHERE timestamp < ?", (cutoff.isoformat(),))
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a new SQLite connection."""
@@ -170,6 +181,7 @@ class SQLiteAuditStore(AuditSink):
                             event.error_code,
                         ),
                     )
+                    self._purge_expired(conn)
                     conn.commit()
             except sqlite3.Error as e:
                 logger.error("Failed to append audit event: %s", e)

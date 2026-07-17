@@ -203,11 +203,8 @@ class DeviceSettings(BaseModel):
     @field_validator("preferred_transports")
     @classmethod
     def _validate_preferred_transports(cls, value: list[str]) -> list[str]:
-        allowed = {"console_telnet", "ssh"}
-        if not value or any(item not in allowed for item in value):
-            raise ValueError("preferred_transports must contain only console_telnet and/or ssh")
-        if len(value) != len(set(value)):
-            raise ValueError("preferred_transports must not contain duplicates")
+        if value != ["console_telnet"]:
+            raise ValueError("v0.1 requires preferred_transports=['console_telnet']")
         return value
 
     @field_validator("per_device_concurrency")

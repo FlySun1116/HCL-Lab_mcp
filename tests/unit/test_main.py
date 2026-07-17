@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 
 import h3c_hcl_mcp.__main__ as cli
 import h3c_hcl_mcp.infrastructure.logging as logging_module
@@ -183,7 +184,7 @@ async def test_server_lifespan_closes_all_device_sessions(
     monkeypatch.setattr(DeviceSessionManager, "close_all", tracked_close_all)
     server = create_server()
 
-    async with server._mcp_server.lifespan(server._mcp_server):
+    async with create_connected_server_and_client_session(server):
         assert close_calls == 0
 
     assert close_calls == 1
