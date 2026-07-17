@@ -401,7 +401,7 @@ class HCLProjectRepository(ProjectRepository):
                             all_projects.append(project)
                         except DomainError as e:
                             # Collect skipped project info for diagnostics
-                            logger.debug("Skipping %s: %s", entry.name, e.message)
+                            logger.debug("Skipping unreadable project entry: %s", e.code.value)
                             continue
             except OSError:
                 continue

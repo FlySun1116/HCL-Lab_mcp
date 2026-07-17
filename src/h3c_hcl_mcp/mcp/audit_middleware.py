@@ -120,7 +120,11 @@ def with_audit(
                         # Auditing is a declared v0.1 invariant. A read-only
                         # result must not be reported as successful when its
                         # append-only evidence could not be persisted.
-                        logger.error("Failed to append audit event for %s: %s", tool_name, error)
+                        logger.error(
+                            "Failed to append audit event for %s: %s",
+                            tool_name,
+                            type(error).__name__,
+                        )
                         raise _audit_unavailable_error(request_id) from None
 
         return wrapper

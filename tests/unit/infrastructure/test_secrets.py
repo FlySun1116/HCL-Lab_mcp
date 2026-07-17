@@ -53,16 +53,21 @@ async def test_explicit_file_precedes_environment_file_path(
 @pytest.mark.asyncio
 async def test_environment_file_path_is_used_without_constructor_path(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     tmp_path: Path,
 ) -> None:
     secrets_file = tmp_path / "environment.json"
     secrets_file.write_text(json.dumps({"token": "file-value"}), encoding="utf-8")
     monkeypatch.delenv("H3C_HCL_SECRET_TOKEN", raising=False)
     monkeypatch.setenv("H3C_HCL_SECRETS_FILE", str(secrets_file))
+    caplog.set_level(logging.DEBUG, logger="h3c_hcl_mcp.infrastructure.secrets")
 
     result = await SecretProviderImpl().get_secret("token")
 
     assert result == "file-value"
+    assert "resolved from configured file" in caplog.text
+    assert str(secrets_file) not in caplog.text
+    assert str(tmp_path) not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -161,7 +166,8 @@ async def test_file_read_error_is_mapped_to_domain_error(
         await SecretProviderImpl(str(secrets_file)).get_secret("token")
 
     assert exc_info.value.code == ErrorCode.INTERNAL_ERROR
-    assert exc_info.value.message == "cannot read secrets file: synthetic access denied"
+    assert exc_info.value.message == "cannot read configured secrets file"
+    assert "synthetic access denied" not in exc_info.value.message
 
 
 @pytest.mark.asyncio

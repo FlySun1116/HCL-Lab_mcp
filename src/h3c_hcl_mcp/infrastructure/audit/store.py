@@ -92,7 +92,7 @@ class SQLiteAuditStore(AuditSink):
         self._retention_days = retention_days
         self._lock = threading.Lock()
         self._init_db()
-        logger.info("Audit store initialized at %s", self._db_path)
+        logger.info("Audit store initialized")
 
     def _init_db(self) -> None:
         """Create tables and indexes if they don't exist."""
@@ -184,10 +184,10 @@ class SQLiteAuditStore(AuditSink):
                     self._purge_expired(conn)
                     conn.commit()
             except sqlite3.Error as e:
-                logger.error("Failed to append audit event: %s", e)
+                logger.error("Failed to append audit event: %s", type(e).__name__)
                 raise DomainError(
                     ErrorCode.INTERNAL_ERROR,
-                    f"audit append failed: {e}",
+                    "audit append failed",
                 ) from e
 
     async def query(
@@ -255,10 +255,10 @@ class SQLiteAuditStore(AuditSink):
             with closing(self._get_connection()) as conn:
                 rows = conn.execute(query_sql, params).fetchall()
         except sqlite3.Error as e:
-            logger.error("Audit query failed: %s", e)
+            logger.error("Audit query failed: %s", type(e).__name__)
             raise DomainError(
                 ErrorCode.INTERNAL_ERROR,
-                f"audit query failed: {e}",
+                "audit query failed",
             ) from e
 
         events: list[AuditEvent] = []

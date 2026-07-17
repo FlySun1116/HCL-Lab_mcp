@@ -50,6 +50,7 @@
 - `audit.retention_days` 已实际清理过期 SQLite 事件，取值限制为 1～365 天。
 - 审计开启时，写入失败会 fail closed，返回稳定 `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE`，不产生未审计成功。
 - 所有公共字符串字段都有长度上限；客户端控制的日志参数在输出前截断。
+- 审计库/Secret 文件初始化不再记录绝对位置；统一日志过滤器脱敏 Windows、UNC 和任意 POSIX 绝对路径、凭据与异常文本，同时保留 HTTPS URL。
 - Tool 注册/调用/Schema 查询使用 FastMCP 公开扩展点；唯一 `_mcp_server` 版本桥集中在 `sdk_compat.py`，运行时仅接受 MCP 1.28.x，依赖锁定到 `mcp>=1.28.1,<1.29`。
 
 ### 安全、会话与 Tool
@@ -139,13 +140,13 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 | `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
 | `uv run --locked ruff format --check .` | 通过 | 110 个文件格式合格 |
 | `uv run --locked mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py` | 通过 | 73 个源/脚本文件无类型错误 |
-| 严格 warning + coverage 全量测试 | 通过 | **734 passed、3 skipped in 65.23s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过 | **87.18%**；3,853 statements / 494 missed，门槛 85% |
+| 严格 warning + coverage 全量测试 | 通过 | **745 passed、3 skipped in 59.83s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过 | **87.38%**；3,874 statements / 489 missed，门槛 85% |
 | 文档/结构化示例 | 通过 | 29 个 Markdown、24 个内部链接、10 个 JSON/YAML 示例；workflow Action 均固定 40 位 SHA |
 | 依赖/许可证 | 通过 | `pip-audit` 无已知漏洞；GPL/AGPL deny gate 通过 |
 | `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 11.45s** |
-| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 11.06s** |
+| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 7.18s** |
+| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 7.22s** |
 | 制品内容策略 | 通过 | wheel 77 members、sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
 | Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
 | GitHub Actions | 条件通过 | CI run `29597839925`、docs run `29597840557` 及 security run `29597839864` 的代码侧检查通过；唯一失败 Dependency Review 因 Dependency Graph disabled |
@@ -153,7 +154,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 制品 stdio 场景在仓库外工作目录运行并清除 `PYTHONPATH`，精确断言 15 个 Tool、对全部公开 Tool 做最小调用，并验证本轮审计事件的非空过滤查询。
 
-真实 HCL 5.10.3 通过官方 `ClientSession` 子进程只读验证：发现 1 个项目、6 个设备、5 条链路，仅保留 2 个 S6850 H3C candidate；当时 running `0/6`、30001/30002 均关闭，两条 display 均稳定返回 `DEVICE_NOT_RUNNING`。
+真实 HCL 5.10.3 通过官方 `ClientSession` 子进程再次只读验证：发现 1 个项目、6 个设备、5 条链路，仅保留 2 个 S6850 H3C candidate；running `0/6`、operable `0/2`。本轮因没有 verified endpoint 未发送设备命令；历史负向调用稳定返回 `DEVICE_NOT_RUNNING`。
 
 ## 未执行的验证
 

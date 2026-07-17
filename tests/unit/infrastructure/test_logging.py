@@ -6,6 +6,7 @@ import io
 import json
 import logging
 from collections.abc import Iterator
+from pathlib import PureWindowsPath
 
 import pytest
 
@@ -124,6 +125,109 @@ def test_setup_logging_bounds_client_controlled_arguments(
     assert truncation_marker not in output
     assert "…' not listed" in output
     assert len(output) < 2_000
+
+
+@pytest.mark.parametrize("format_json", [False, True])
+def test_setup_logging_redacts_absolute_host_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    format_json: bool,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO", format_json=format_json)
+
+    windows_path = PureWindowsPath("C:/Users/example/private/audit.db")
+    windows_text = "D:\\Labs\\private\\project.net"
+    posix_path = "/home/example/private/audit.db"
+    system_path = "/etc/hcl/private.log"
+    install_path = "/usr/local/hcl/config.yaml"
+    custom_path = "/custom-lab/runtime/console.log"
+    file_uri = "file:///var/lib/hcl/private.log"
+    localhost_file_uri = "file://localhost/var/lib/hcl/private.log"
+    authority_file_uri = "file://server/share/private/audit.db"
+    forward_unc = "//server/share/private/audit.db"
+    root_relative_route = "/api/v1/health"
+    logging.getLogger("tests.paths").warning(
+        "local files: %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, and %s",
+        windows_path,
+        windows_text,
+        posix_path,
+        system_path,
+        install_path,
+        custom_path,
+        file_uri,
+        localhost_file_uri,
+        authority_file_uri,
+        forward_unc,
+        root_relative_route,
+    )
+
+    output = stream.getvalue()
+    assert "C:/Users" not in output
+    assert "D:\\Labs" not in output
+    assert "/home/example" not in output
+    assert "/etc/hcl" not in output
+    assert "/usr/local/hcl" not in output
+    assert "/custom-lab" not in output
+    assert "/var/lib/hcl" not in output
+    assert "file://localhost" not in output
+    assert "file://server/share" not in output
+    assert "//server/share" not in output
+    assert "/api/v1/health" not in output
+    assert output.count("<local-path>") >= 11
+
+
+@pytest.mark.parametrize("format_json", [False, True])
+def test_setup_logging_preserves_diagnostics_after_windows_path(
+    monkeypatch: pytest.MonkeyPatch,
+    format_json: bool,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO", format_json=format_json)
+
+    detail = "C:\\private\\audit.db; request=abc-123; url=https://example.com/api/v1"
+    logging.getLogger("tests.path-suffix").warning("failure=%s", detail)
+
+    output = stream.getvalue()
+    assert "C:\\private" not in output
+    assert "<local-path>" in output
+    assert "request=abc-123" in output
+    assert "https://example.com/api/v1" in output
+
+
+@pytest.mark.parametrize("format_json", [False, True])
+def test_setup_logging_redacts_paths_from_exception_text(
+    monkeypatch: pytest.MonkeyPatch,
+    format_json: bool,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO", format_json=format_json)
+
+    try:
+        raise RuntimeError('failed at "C:\\Users\\example\\private\\audit.db"')
+    except RuntimeError:
+        logging.getLogger("tests.path-exception").exception("bounded failure")
+
+    output = stream.getvalue()
+    assert "C:\\Users" not in output
+    assert "<local-path>" in output
+
+
+@pytest.mark.parametrize("format_json", [False, True])
+def test_setup_logging_preserves_https_urls(
+    monkeypatch: pytest.MonkeyPatch,
+    format_json: bool,
+) -> None:
+    stream = io.StringIO()
+    monkeypatch.setattr(logging_module.sys, "stderr", stream)
+    logging_module.setup_logging("INFO", format_json=format_json)
+
+    logging.getLogger("tests.url").info("documentation=%s", "https://example.com/api/v1")
+
+    output = stream.getvalue()
+    assert "https://example.com/api/v1" in output
 
 
 @pytest.mark.parametrize("format_json", [False, True])

@@ -100,12 +100,12 @@ class SecretProviderImpl(SecretProvider):
         except OSError as e:
             raise DomainError(
                 ErrorCode.INTERNAL_ERROR,
-                f"cannot read secrets file: {e}",
+                "cannot read configured secrets file",
             ) from e
 
         value = data.get(key)
         if value is not None and isinstance(value, str):
-            logger.debug("Secret '%s' resolved from file %s", key, secrets_path)
+            logger.debug("Secret '%s' resolved from configured file", key)
             return value
         return None
 

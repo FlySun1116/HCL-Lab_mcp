@@ -303,7 +303,11 @@ async def _audit_invalid_call(
             )
         )
     except Exception as error:
-        logger.error("Failed to audit validation error for %s: %s", tool_name, error)
+        logger.error(
+            "Failed to audit validation error for %s: %s",
+            tool_name,
+            type(error).__name__,
+        )
         raise _audit_unavailable_error(request_id) from None
 
 

@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restricted v0.1 transport configuration to exactly `console_telnet`; SSH remains a v0.2 capability rather than an accepted but unusable setting.
 - Enforced `audit.retention_days` in SQLite initialization/appends and bounded/redacted human and JSON exception logging.
 - Replaced FastMCP ToolManager mutation with public registration/call/list extension points; the sole private server-version bridge is isolated behind an MCP 1.28.x compatibility guard.
+- Removed absolute audit/secret/project paths and raw exception text from production log arguments; human and JSON logging now redact Windows, UNC, generic POSIX paths, credentials, and bounded tracebacks while preserving HTTPS URLs.
 
 ### Changed
 
@@ -79,11 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verification status
 
-- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **734 passed, 3 skipped in 65.23s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
-- Active-v0.1 line coverage is **87.18%** (3,853 statements, 494 missed), above the 85% hard gate.
+- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **745 passed, 3 skipped in 59.83s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **87.38%** (3,874 statements, 489 missed), above the 85% hard gate.
 - [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) remains the integration target. Latest CI, documentation, artifact security, license, secret-scan, and CodeQL checks pass; only Dependency Review fails because the repository Dependency Graph setting is disabled. The repository also has no protection rule on `main`, so successful checks are not yet enforced as required checks.
 - `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
-- Distribution policy passes with 77 wheel members and 174 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members. SHA-256: wheel `36244C5CABB321563835FCEAA5FE5E92F36FEEC8E552AB36EEBBA072BDC05162`; sdist `AF185C190DC92F7C3FAE6F8E3E45999B3030287D1CAFA4667BE99C261575674A`.
+- Distribution policy passes with 77 wheel members and 174 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members. SHA-256: wheel `A666C36E5ACB66EBF8ED8584C4A52BBA5A4A6C8DDEBD3CF52B0BDFDC7FA6936F`; sdist `4F25C61BC9E327E7C74D5E7375107115512B41387E92B88B580BFE55AD976822`.
 - Locked dependency consistency, runtime vulnerability audit, incompatible-license gate, documentation/examples validation, and SBOM generation all pass locally.
 - The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
 - Claude Code 2.1.211 reports the stdio Server as connected from an isolated temporary profile; Claude Desktop and Cursor UI smoke tests remain external release checks.

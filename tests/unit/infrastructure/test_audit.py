@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import tempfile
@@ -13,6 +14,7 @@ from typing import Any
 import pytest
 
 from h3c_hcl_mcp.domain.audit import AuditEvent
+from h3c_hcl_mcp.domain.errors import DomainError
 from h3c_hcl_mcp.infrastructure.audit.store import SQLiteAuditStore
 
 
@@ -103,6 +105,64 @@ async def test_closes_every_short_lived_connection(
 
     assert len(connections) == 3
     assert all(connection.closed for connection in connections)
+
+
+def test_initialization_log_does_not_expose_database_path(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "private" / "audit.db"
+    caplog.set_level(logging.INFO, logger="h3c_hcl_mcp.infrastructure.audit.store")
+
+    SQLiteAuditStore(db_path=str(database))
+
+    assert "Audit store initialized" in caplog.text
+    assert str(database) not in caplog.text
+    assert str(tmp_path) not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_append_failure_does_not_expose_sqlite_error_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    store = SQLiteAuditStore(db_path=str(tmp_path / "audit.db"))
+    marker = "C:\\Users\\example\\private\\audit.db"
+    caplog.set_level(logging.ERROR, logger="h3c_hcl_mcp.infrastructure.audit.store")
+
+    def fail_connection() -> sqlite3.Connection:
+        raise sqlite3.OperationalError(f"cannot open {marker}")
+
+    monkeypatch.setattr(store, "_get_connection", fail_connection)
+
+    with pytest.raises(DomainError, match="^audit append failed$"):
+        await store.append(_make_event())
+
+    assert marker not in caplog.text
+    assert "OperationalError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_query_failure_does_not_expose_sqlite_error_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    store = SQLiteAuditStore(db_path=str(tmp_path / "audit.db"))
+    marker = "/private/audit/query.db"
+    caplog.set_level(logging.ERROR, logger="h3c_hcl_mcp.infrastructure.audit.store")
+
+    def fail_connection() -> sqlite3.Connection:
+        raise sqlite3.OperationalError(f"cannot open {marker}")
+
+    monkeypatch.setattr(store, "_get_connection", fail_connection)
+
+    with pytest.raises(DomainError, match="^audit query failed$"):
+        await store.query(limit=1)
+
+    assert marker not in caplog.text
+    assert "OperationalError" in caplog.text
 
 
 class TestAppendAndQuery:

@@ -7,6 +7,8 @@ Never use print() or stdout logging in production code.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import sys
 from typing import Any
 
@@ -14,6 +16,26 @@ from h3c_hcl_mcp.infrastructure.audit.redact import redact_sensitive
 
 _MAX_LOG_ARGUMENT_CHARS = 1024
 _MAX_LOG_EXCEPTION_CHARS = 1024
+_LOCAL_PATH_MARKER = "<local-path>"
+_QUOTED_ABSOLUTE_PATH_RE = re.compile(
+    r"""(["'])(?:[A-Za-z]:[\\/]|\\\\|/).*?\1""",
+    re.IGNORECASE,
+)
+_FILE_URI_PATH_RE = re.compile(
+    r"""(?<![A-Za-z0-9_])file://[^\s"'<>|]+""",
+    re.IGNORECASE,
+)
+_FORWARD_UNC_PATH_RE = re.compile(
+    r"""(?<![A-Za-z0-9_:/])//[^/\s"'<>|]+/[^\s"'<>|]+""",
+)
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\t]*?"
+    r"(?=(?:;\s*|,\s+|\s+[A-Za-z_][A-Za-z0-9_.-]*=|$))",
+    re.IGNORECASE,
+)
+_POSIX_ABSOLUTE_PATH_RE = re.compile(
+    r"""(?<![A-Za-z0-9_:/])/(?!/)[^\s"'<>|]+""",
+)
 
 
 def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
@@ -100,6 +122,8 @@ class _BoundedLogArgumentsFilter(logging.Filter):
     """Bound client-controlled string arguments before formatter expansion."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _sanitize_log_text(record.msg)
         if isinstance(record.args, tuple):
             record.args = tuple(_bounded_log_argument(value) for value in record.args)
         elif isinstance(record.args, dict):
@@ -108,19 +132,34 @@ class _BoundedLogArgumentsFilter(logging.Filter):
 
 
 def _bounded_log_argument(value: object) -> object:
+    if isinstance(value, os.PathLike):
+        return _LOCAL_PATH_MARKER
+    if isinstance(value, BaseException):
+        return type(value).__name__
     if not isinstance(value, str):
         return value
-    redacted = redact_sensitive(value)
+    redacted = _sanitize_log_text(value)
     if len(redacted) <= _MAX_LOG_ARGUMENT_CHARS:
         return redacted
     return redacted[: _MAX_LOG_ARGUMENT_CHARS - 1] + "…"
 
 
 def _bounded_exception_text(value: str) -> str:
-    redacted = redact_sensitive(value)
+    redacted = _sanitize_log_text(value)
     if len(redacted) <= _MAX_LOG_EXCEPTION_CHARS:
         return redacted
     return redacted[: _MAX_LOG_EXCEPTION_CHARS - 1] + "…"
+
+
+def _sanitize_log_text(value: str) -> str:
+    """Remove credentials and absolute host paths from log text."""
+
+    redacted = redact_sensitive(value)
+    redacted = _QUOTED_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    redacted = _FILE_URI_PATH_RE.sub(f"file://{_LOCAL_PATH_MARKER}", redacted)
+    redacted = _FORWARD_UNC_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    redacted = _WINDOWS_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    return _POSIX_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
 
 
 def get_logger(name: str) -> logging.Logger:
