@@ -4,15 +4,15 @@
 
 - 候选版本：`0.1.0-beta.2`（未发布）
 - 分支：`codex/beta2-release-candidate`
-- 当前分支基线：`da7747b` + 本文所在提交
-- 当前证据基线：本轮本地源码、双制品、安全/文档/依赖门禁；推送后以 Draft PR #4 新 CI run 为远端证据
+- 当前分支基线：`7e05464` + 本文所在提交
+- 当前证据基线：本轮本地源码、双制品、安全/文档/依赖门禁，以及 Draft PR #4 的 2026-07-18 新 CI/CodeQL runs
 - beta.2 集成状态：项目文件、审计、日志、SDK 与供应链边界已加固；真实 HCL 只验证到项目/拓扑发现和“设备未运行”负向路径，未宣称两条 display 正向成功
 - 日期：2026-07-18
 - 发布状态：未创建 tag、GitHub Release 或 PyPI 包
 
 ## 目标 Issue/PR
 
-当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。候选集成到 [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4)；旧六项 CI 基线已通过，本轮新增 docs/security/CodeQL/release 供应链门禁需由推送后的新 run 验证。merge、tag、Release、PyPI 和仓库设置变更仍需维护者授权。
+当前目标是完成 beta.1 测试报告中 parser、runtime、配置、validation、audit、安全和并发问题的修复，形成 `v0.1.0-beta.2` 可验证候选。候选集成到 [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4)；最新 CI、docs、artifact security、license、secret scan 和 CodeQL 均通过，唯一红项 Dependency Review 明确因仓库未启用 Dependency Graph。merge、tag、Release、PyPI 和仓库设置变更仍需维护者授权。
 
 ## 完成内容
 
@@ -111,6 +111,9 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 
 ## Git commits
 
+- `7e05464 test: avoid CodeQL sensitive-data false positive`（保持日志边界测试语义，避免测试变量名触发高危误报；复跑 CodeQL 通过）
+- `0efdc8a fix: complete v0.1 release readiness gates`（项目/审计/SDK 边界、兼容矩阵、Agent Team 和供应链门禁）
+- `da7747b docs: record green beta2 CI evidence`（上一轮六项 CI 证据）
 - `192fc41 ci: fix Linux typecheck and gitleaks token`（Linux mypy 跨平台兼容与 gitleaks v3 实际执行）
 - `61ba9d9 docs: finalize beta2 security verification`（beta.2 安全验证文档）
 - `183f3f6 fix: harden beta2 security and release boundaries`（审计 fail-closed、脱敏、Telnet/session、输入边界与制品策略）
@@ -145,7 +148,7 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 | Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 11.06s** |
 | 制品内容策略 | 通过 | wheel 77 members、sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
 | Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
-| GitHub Actions | 待刷新 | 旧六项 CI 基线通过；新增 docs/security/CodeQL workflow 待本轮推送验证 |
+| GitHub Actions | 条件通过 | CI run `29597839925`、docs run `29597840557` 及 security run `29597839864` 的代码侧检查通过；唯一失败 Dependency Review 因 Dependency Graph disabled |
 | `git diff --check` | 通过 | 无空白错误 |
 
 制品 stdio 场景在仓库外工作目录运行并清除 `PYTHONPATH`，精确断言 15 个 Tool、对全部公开 Tool 做最小调用，并验证本轮审计事件的非空过滤查询。
@@ -163,10 +166,10 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 2. beta.2 本地制品已构建但尚未发布 PyPI；文档和示例必须使用源码虚拟环境，不可宣称 `uvx h3c-hcl-mcp` 已可用。
 3. `h3c_diff_config`、Job 创建、SSH、NETCONF、HTTP 和所有写操作尚未实现。
 4. Tool alias 尚待维护者决定，但 namespaced Tool 不影响 MCP 协议可发现性。
-5. Draft PR #4 的旧六项 GitHub Actions 已全部通过，本轮新增门禁需刷新；GitHub API 对 `main` protection 查询返回 404 `Branch not protected`，成功检查不会被 required checks 强制执行。
+5. Draft PR #4 最新 CI/docs/security/CodeQL 的代码侧门禁通过；Dependency Review 因 Dependency Graph disabled 失败。GitHub API 对 `main` protection 查询返回 404 `Branch not protected`，成功检查不会被 required checks 强制执行。
 6. 候选 feature 分支和 Draft PR 均已就绪；启用 `main` 分支保护属于仓库治理变更，需维护者明确授权。
 7. Claude Code 隔离连接已通过；Claude Desktop 和 Cursor 仍缺真实 UI 级连接记录。Cursor 3.11.25 的隔离 CLI 尝试在进入 MCP 前因自身 Windows `MachineGuid` 查询失败退出，未创建临时 profile、未留下进程，不能归因于 Server。
-8. Private Vulnerability Reporting 当前关闭，`pypi` environment/Trusted Publisher/显式发布开关尚未由维护者配置。
+8. Dependency Graph 与 Private Vulnerability Reporting 当前关闭，`pypi` environment/Trusted Publisher/显式发布开关尚未由维护者配置。
 
 ## 下一阶段任务
 

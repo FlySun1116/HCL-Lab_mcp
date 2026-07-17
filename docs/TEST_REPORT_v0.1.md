@@ -2,9 +2,9 @@
 
 > 测试对象：`0.1.0-beta.2` 本地提交候选
 > 分支基线：`da7747b` + 本报告所在提交
-> 证据基线：2026-07-18 本地源码、协议、双制品、文档、依赖和安全门禁；远端以 Draft PR #4 新 run 为准
+> 证据基线：2026-07-18 本地源码、协议、双制品、文档、依赖和安全门禁；远端 CI/docs/security/CodeQL 已刷新
 > 报告日期：2026-07-18
-> 当前结论：**CONDITIONAL GO**（本地代码/制品门禁通过；新增远端 docs/security/CodeQL 门禁、真实运行设备正向验证、客户端 UI 与维护者发布授权仍待完成）
+> 当前结论：**CONDITIONAL GO**（本地与远端代码门禁通过；Dependency Review 等待启用 Dependency Graph，真实运行设备正向验证、客户端 UI 与维护者发布授权仍待完成）
 
 本报告替代 beta.1 的旧失败快照。所有“已修复”结论均以当前源码、自动化测试或本机只读观察为依据；没有把未运行设备上的命令伪造为成功。仓库尚未发布 PyPI、tag 或 GitHub Release。
 
@@ -121,7 +121,7 @@ beta.2 注册 15 个 Tool：
 | Python 3.12 wheel stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 11.45s** |
 | Python 3.12 sdist stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 11.06s** |
 | 制品内容策略 | 通过：wheel 77/sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接、路径穿越或超大成员 |
-| GitHub Actions | 待刷新：旧 6-job run 已通过；本轮新增 docs/security/CodeQL workflow 待 Draft PR #4 新 run |
+| GitHub Actions | 条件通过：run `29597839925`、`29597840557`、`29597839864` 的代码侧检查通过；Dependency Review 仅因 Dependency Graph disabled 失败 |
 | `git diff --check` | 通过 |
 
 # 成功项
@@ -829,7 +829,7 @@ beta.2 注册 15 个 Tool：
 
 级别：P1
 
-状态：VERIFIED（本地）/REMOTE-PENDING
+状态：VERIFIED（代码）/HUMAN-REQUIRED（Dependency Graph）
 
 问题：仓库此前没有独立依赖漏洞、许可证、CodeQL、文档、SBOM/provenance 和可信发布门禁。
 
@@ -837,7 +837,7 @@ beta.2 注册 15 个 Tool：
 
 预期：PR 运行依赖/许可证/CodeQL/docs/repository gates；发布只从 main 的验证签名 tag 进入受保护 PyPI environment，并生成 SBOM、校验和和 provenance。
 
-实际：新增 `security.yml`、`docs.yml`、`release.yml`，所有第三方 Action 固定完整 SHA；本地依赖、许可证、文档、构建和 SBOM 路径通过。
+实际：新增 `security.yml`、`docs.yml`、`release.yml`，所有第三方 Action 固定完整 SHA；本地与远端依赖、许可证、文档、构建、CodeQL 和 SBOM 路径通过。Dependency Review 因仓库 Dependency Graph disabled 而 fail closed。
 
 建议：推送后要求新 workflows 全绿，再由维护者配置 required checks 与 release environment。
 
@@ -921,11 +921,11 @@ beta.2 注册 15 个 Tool：
 
 状态：HUMAN-REQUIRED
 
-问题：GitHub Private Vulnerability Reporting 当前 disabled，`main` 未保护，`pypi` environment/Trusted Publisher/显式发布开关尚未配置。
+问题：GitHub Dependency Graph、Private Vulnerability Reporting 当前 disabled，`main` 未保护，`pypi` environment/Trusted Publisher/显式发布开关尚未配置。
 
-复现步骤：GitHub API 查询 private vulnerability reporting 和 main protection；检查仓库 environments/PyPI Publisher。
+复现步骤：运行 Dependency Review，查询 private vulnerability reporting 和 main protection；检查仓库 environments/PyPI Publisher。
 
-预期：公开发布前具备私密报告入口、required checks、受保护发布环境和 OIDC Trusted Publisher。
+预期：公开发布前启用 Dependency Graph、私密报告入口、required checks、受保护发布环境和 OIDC Trusted Publisher。
 
 实际：代码与 workflow 已 fail closed，但仓库侧设置尚未执行。
 
@@ -953,5 +953,5 @@ beta.2 注册 15 个 Tool：
 1. **无待修复的 P1 本地代码缺陷**：BUG-018～028、BUG-031～042 已在当前候选验证；新增远端 security/docs/CodeQL 门禁仍需 Draft PR 新 run。
 2. **真实 HCL 正向测试**：等待维护者启动设备，只执行两条 display 命令并记录脱敏结果。
 3. **发布决策**：候选分支和 Draft PR #4 已通过 CI；merge/tag/Release/PyPI 仍需维护者明确授权。
-4. **真实客户端与仓库治理**：按 BUG-029/030/044 补齐 Claude Desktop、Cursor、`main` 保护、私密报告和受保护发布环境。
+4. **真实客户端与仓库治理**：按 BUG-029/030/044 补齐 Claude Desktop、Cursor、Dependency Graph、`main` 保护、私密报告和受保护发布环境。
 5. **后续契约决策**：Tool alias 与 `additionalProperties`（BUG-043）分别单独评审，不在 beta.2 安全候选中临时改变公共 Tool Schema。
