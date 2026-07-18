@@ -3,6 +3,15 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.x-green.svg)](https://modelcontextprotocol.io/)
+[![Development](https://img.shields.io/badge/status-%E6%8C%81%E7%BB%AD%E5%BC%80%E5%8F%91%E4%B8%AD-orange.svg)](docs/HANDOVER.md)
+
+> [!IMPORTANT]
+> **持续开发中 / Work in progress.** The v0.1 read-only MCP path is available
+> as an unreleased beta candidate. Autonomous HCL topology creation is an
+> unfinished v0.2 effort: its safety contracts and deterministic planner exist,
+> but no lifecycle Tool or real UI Automation Provider is registered. See
+> [docs/HANDOVER.md](docs/HANDOVER.md) for the exact implementation state,
+> verification evidence, known gaps, and restart instructions.
 
 `h3c-hcl-mcp` is a local MCP Server targeting H3C Cloud Lab 5.10.x, with the
 current compatibility evidence recorded on HCL 5.10.3. It lets Claude,
@@ -17,6 +26,11 @@ through HCL loopback console ports.
 ## Current status
 
 Current source version: **v0.1.0-beta.2** (unreleased local beta).
+
+Development branch status: **v0.2 control plane paused after the contract and
+planner stage**. The existing public surface remains the same 15 read-only
+Tools; current source must not be described as able to autonomously create or
+start an HCL topology.
 
 - Real HCL 5.10.3 `project.json` and nested `.net` parsing is implemented.
 - Runtime endpoints come only from explicit HCL log bindings and must pass a

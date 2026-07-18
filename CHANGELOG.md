@@ -5,6 +5,28 @@ All notable changes to h3c-hcl-mcp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added the first internal v0.2 topology-control contracts: deeply immutable desired topology and operation
+  models, R0-R3 risk levels, hard resource budgets, provider capabilities, snapshots, fenced operation
+  contexts, and bounded receipts.
+- Added an `HclControlProvider` Port with typed capability, snapshot, and structured-operation methods; no
+  adapter or public Tool is registered yet.
+- Added a deterministic, side-effect-free `TopologyPlanner` that orders isolated-lab operations, binds plans
+  to canonical SHA-256 content, estimates memory/time, and fails before execution on unsupported models,
+  missing Provider capabilities, or exceeded budgets.
+- Proposed ADR-0007 for a disabled-by-default, exact-version Windows UI Automation Provider that uses semantic
+  control IDs and never private HCL ports, direct project-file edits, VirtualBox control, coordinates, or image
+  matching.
+
+### Security
+
+- The existing 15-Tool v0.1 surface and default read-only behavior are unchanged. Real topology/configuration
+  side effects remain unavailable until Provider, journal, lease, recovery, Execution Grant, and public Schema
+  reviews are complete.
+
 ## [0.1.0-beta.2] — Unreleased
 
 ### Added

@@ -172,6 +172,8 @@ Clock                 now
 - ADR-0004：Hexagonal Architecture 与模块依赖方向；
 - ADR-0005：默认只读、计划/审批分离的配置变更模型；
 - ADR-0006：不实现或发布未授权 HCL 私有控制协议。
+- ADR-0007（Proposed）：以版本锁定、默认关闭的 Windows UI Automation Provider 实现 HCL 生命周期控制，
+  不使用坐标点击、私有端口或直接项目文件写入。
 
 ---
 
@@ -265,20 +267,29 @@ sequenceDiagram
 | `job_cancel` | 请求取消尚未进入不可中断阶段的任务 | 已注册；beta.2 JobStore 为占位实现，尚无生产 Job |
 | `audit_query` | 按请求 ID、工具、设备和时间查询审计摘要 | 已注册；默认使用本地 SQLite，关闭审计时返回空结果且不创建数据库 |
 
-### 5.5 HCL 生命周期工具（规划项）
+### 5.5 HCL 生命周期工具（v0.2 提案，未注册）
 
-以下工具只有在 H3C 提供正式接口、SDK 或明确集成授权后实现；稳定版不得通过复刻本机私有 TCP 协议实现：
+最终目标不是把 HCL 的每个按钮映射为一个低级 Tool，而是让 Agent 提交期望拓扑，由 Server 生成可审查、
+可预算、可恢复的确定性计划。最小公共面提案如下：
 
-- `hcl_start_devices`
-- `hcl_stop_devices`
-- `hcl_start_all`
-- `hcl_stop_all`
-- `hcl_create_project`
-- `hcl_add_device`
-- `hcl_connect_interfaces`
-- `hcl_export_project`
+| Tool | 输入/输出 | 副作用与约束 |
+|---|---|---|
+| `hcl_plan_topology` | 期望设备/链路、资源预算；返回不可变 `plan_id`、diff、风险和估算 | 无副作用；未知型号、能力缺失或超预算立即拒绝 |
+| `hcl_apply_topology` | `plan_id`、Execution Grant；返回 `job_id` | 只执行已哈希计划；首个动作前写 journal，逐步 checkpoint，失败进入补偿 |
+| `hcl_set_device_state` | 项目、设备集合、`running|stopped`；返回 `job_id` | 顺序启动默认并发 1；含未保存配置的停止属于高风险 |
+| `lab_run_acceptance` | 结构化运行态、接口、路由和连通性断言 | 只读 Job；不接受任意 CLI 字符串 |
 
-在此之前，`hcl_get_runtime` 若发现设备未运行，应返回可操作提示：“请在 HCL 中打开项目并启动目标设备”，而不是尝试绕过 GUI 状态机。
+现有 `job_get`、`job_cancel` 和 `audit_query` 复用，不再为 create/add/link/start 的每个 GUI 动作暴露独立
+公共 Tool。内部 `TopologyOperation` 仍将动作拆成 `create_project`、`add_device`、`connect_link` 和
+`start_device`，供 saga、幂等和 checkpoint 使用。
+
+真实 Provider 的优先级是：H3C 正式 SDK/API > 明确授权 Provider > ADR-0007 提议的版本锁定 Windows UI
+Automation。无论采用哪一种，都禁止复刻 16500/16600/18600 私有协议、调用 VirtualBox 绕过 HCL、直接
+修改 `.net`/`project.json`、使用屏幕坐标或图像匹配。UI Automation Provider 必须默认关闭，只接受
+精确版本和完整 capability probe，并且只能操作由自身创建的隔离项目或 Execution Grant 明确列出的项目。
+
+在 ADR-0007 获得批准、真实 Provider 验收和公共 Schema 评审完成前，以上 Tool 不注册；`hcl_get_runtime`
+发现设备未运行时继续返回可操作提示，而不会绕过 GUI 状态机。
 
 ### 5.6 可选 MCP Resources 与 Prompts
 
@@ -1051,7 +1062,9 @@ h3c_hcl_mcp.approval_providers
 | `v0.1.0-beta.1` | First local HCL beta | 首版 HCL 项目发现、console Telnet 和 15 个 v0.1 Tool | SSH、写配置 | 暴露真实 parser/runtime/validation 问题，进入 beta.2 修复 |
 | `v0.1.0-beta.2` | Local HCL hardening candidate | 真实 HCL 5.10 parser、日志绑定 + prompt runtime、stdio validation/audit、配置和并发修复 | SSH、写配置、PyPI 发布 | 全量门禁、Python 3.12 干净 wheel、真实运行设备两条 display 验证 |
 | `v0.1.0` | Read-only MVP | Claude/Cursor stdio、审计、兼容矩阵、PyPI | 任意配置写入 | 稳定错误码，核心覆盖率 ≥ 85% |
-| `v0.2.0` | Controlled change preview | SSH、plan/apply、审批、备份、接口启停 | 远程多用户、HCL lifecycle | 所有写操作可审计且失败安全 |
+| `v0.2.0-alpha.1` | Control-kernel preview | 结构化拓扑模型、预算、Provider Port、Plan/Job/Lock/Journal、fake saga | 注册写 Tool、真实 HCL 副作用 | 崩溃恢复、幂等、fencing、补偿和超预算测试通过 |
+| `v0.2.0-beta.1` | Local lab automation | 版本锁定 HCL Provider、隔离双节点实验室、顺序启动、console 验收、配置 plan/apply | 默认写入、现有项目修改、批量高并发 | 真实 HCL 建拓扑、启动、两条 display 和双向 ping 证据 |
+| `v0.2.0` | Controlled lab automation | Execution Grant、拓扑 apply、结构化配置、备份/回滚、验收 Job | 远程多用户、任意 CLI、未授权 Provider | 所有副作用可审计、预算受限、失败安全且公共 Schema 评审通过 |
 | `v0.3.0` | Protocol expansion | NETCONF capability、更多 Comware parser、MCP Resources/Prompts | 未验证型号的通用承诺 | 至少两个设备族兼容验证 |
 | `v0.5.0` | Remote/enterprise beta | Streamable HTTP、OAuth 2.1、外部 Secret/Audit | 未授权 HCL 私有 API | 威胁模型与部署指南完成 |
 | `v1.0.0` | Stable API | 稳定 Tool/Port/Error 契约、升级政策、长期支持基线 | 未获授权的 HCL 生命周期控制 | 90% 核心覆盖、两类设备集成、安全审查 |
@@ -1078,12 +1091,15 @@ h3c_hcl_mcp.approval_providers
 
 验收：连续 100 次只读调用无会话串扰；设备未启动、端口占用、输出分页和超时均返回稳定错误。
 
-### Phase 2：受控配置（2～4 周）
+### Phase 2：本地实验室控制与受控配置（分阶段）
 
-- 实现 plan/apply、基线哈希、审批、备份、设备锁和验证。
-- 加入 SSH adapter 和至少两个 Comware 版本的兼容测试。
+- 先实现无真实副作用的拓扑领域模型、预算、Provider Port、Plan/Job/Lock/Journal 和 fake saga。
+- 在 ADR-0007 获批后实现版本锁定 UI Automation Provider，只操作隔离项目，先完成单节点、再完成双节点。
+- 实现结构化配置 plan/apply、基线哈希、Execution Grant、备份、设备锁、补偿和验收 Job。
+- SSH/NETCONF 作为设备管理通道后续加入；本机 HCL console 仍是首个真实闭环。
 
-验收：所有写入都可审计；无审批、计划过期、基线变化和策略拒绝场景不能落配置。
+验收：AI 能在资源预算内创建隔离双节点实验室、顺序启动、完成 console prompt 验证、配置地址并双向
+ping；所有副作用均有 intent/checkpoint，无授权、计划过期、基线变化、资源不足和策略拒绝场景不能落地。
 
 ### Phase 3：生态发布（2 周）
 

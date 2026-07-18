@@ -1,5 +1,125 @@
 # HANDOVER — HCL-Lab MCP Server
 
+## 2026-07-18：v0.2 控制平面暂停点（当前接手入口）
+
+### 当前版本/分支
+
+- Python 包版本仍为 `0.1.0-beta.2`，尚未发布。
+- 当前开发分支：`codex/v0.2-control-plane`。
+- 分支基线：`45c641b fix: reject ambiguous HCL project identities`，来自
+  `codex/beta2-release-candidate`。
+- 状态：**持续开发中，但本阶段主动暂停**。当前提交用于固化安全契约、设计和交接状态，
+  不是 v0.2 可用版本，也不应合并或发布为稳定版。
+- v0.1 的 15 个只读 MCP Tool 未改变；没有注册任何 HCL 生命周期或拓扑写入 Tool。
+
+### 本阶段目标与实际完成度
+
+目标是让 Agent 最终能够在 HCL 5.10.3 中创建隔离实验、添加设备和链路、顺序启动设备，
+再通过 loopback console 执行受控 Comware 验收。当前只完成了不产生副作用的控制内核第一层：
+
+- 新增不可变 `DesiredTopology`、结构化 `TopologyOperation`、资源预算/估算、R0–R3 风险等级；
+- 拓扑、Windows/Unicode 身份、设备名、端口和无向链路均执行确定性规范化和冲突拒绝；
+- `TopologyPlan` 强制绑定期望拓扑、规范操作序列、资源估算、Provider 能力/会话指纹和
+  `must_not_exist=True`，并验证 SHA-256 内容哈希；
+- `OperationContext` 绑定 plan、Execution Grant、目标项目、预期基线、操作序号/摘要、
+  idempotency key、截止时间和 fencing token；
+- `OperationReceipt` 回绑完整上下文，只允许哈希 checkpoint 和符号化 warning code，
+  不提供自由文本或本机路径通道；
+- 新增无 I/O 的 `TopologyPlanner`，按 create project → add device → connect link → start device
+  生成确定性计划，并在能力不足、型号未知或预算超限时于副作用前拒绝；
+- 新增尚未有实现类的 `HclControlProvider` Port；
+- 新增 Proposed ADR-0007，限定未来 Provider 只能使用精确版本/会话探测后的 Windows UI
+  Automation 语义控件，不得使用 HCL 私有端口、VirtualBox 控制、直接修改工程文件、坐标点击
+  或图像匹配；
+- 更新设计和 CHANGELOG，明确 v0.2 提案尚未注册公共 Tool。
+
+### 修改文件
+
+- `src/h3c_hcl_mcp/domain/topology_control.py`
+- `src/h3c_hcl_mcp/application/topology_planner.py`
+- `src/h3c_hcl_mcp/ports/hcl_control_provider.py`
+- `tests/contract/test_domain_models.py`
+- `tests/contract/test_ports.py`
+- `tests/unit/application/test_topology_planner.py`
+- `docs/adr/0007-version-gated-hcl-ui-automation.md`
+- `docs/design.md`
+- `CHANGELOG.md`
+- `README.md`
+- `docs/HANDOVER.md`
+
+### 关键决策与边界
+
+- ADR-0007 仍为 **Proposed**，不能据此宣称 UI Automation 路线已经获得稳定公共契约批准。
+- Provider 优先级仍是厂商公开 SDK/API → 明确授权接口 → 精确版本锁定的 UI Automation。
+- 当前控制模型只描述“创建一个必须尚不存在的隔离工程”，不接管、覆盖或丢弃用户现有工程。
+- UIA Provider 必须 fail closed：版本、locale、会话、Automation ID、模态窗口或基线任一变化即停止。
+- 设备启动默认串行且必须先通过内存预算；初始实机里程碑最多两台低资源设备和一条链路。
+- 拓扑创建权限不包含 `system-view`、配置保存、重启、删除或修改其他工程的权限。
+- 公共 Tool Schema、Execution Grant、默认写策略和 ADR 状态均需维护者重要决策后才能改变。
+
+### 已执行验证
+
+- 安全模型、Provider Port 和 Planner 聚焦测试：**133 passed in 0.53s**。
+- 聚焦测试覆盖了计划防伪、内容哈希、Windows 身份碰撞、能力/型号检查、资源拒绝、
+  grant/baseline/fence/receipt 绑定、过期时间和自由文本拒绝。
+- `ruff check .`：通过；`ruff format --check .`：**114 files already formatted**。
+- `mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py`：
+  **Success: no issues found in 76 source files**。
+- 全量测试：**846 passed、3 skipped in 59.87s**。
+- 本阶段没有重新构建 wheel/sdist，也没有运行真实 HCL、Claude Desktop 或 Cursor 新能力测试；
+  下方 beta.2 的历史制品结果不能代替 v0.2 当前分支的制品验证。
+
+### 未完成内容
+
+1. `PlanStore`、事务 Journal、Lease/Fencing、Job、Execution Grant 校验和进程重启恢复编排；
+2. fake Provider 的成功、重试、取消、基线漂移、部分失败、补偿和恢复 saga；
+3. HCL 5.10.3 中文界面的只读版本/locale/会话/Automation ID capability probe；
+4. Windows UI Automation Provider 实现；
+5. 新建隔离工程、添加两台设备、连接一条链路和顺序启动的真实 HCL 闭环；
+6. console prompt、`display version`、`display ip interface brief` 和互 ping 验收；
+7. 公共 lifecycle Tool、错误语义、Execution Grant 和默认策略评审；
+8. wheel/sdist 安装 smoke、Claude/Cursor 对新增能力的端到端验证；
+9. ADR-0007 接受、PR 合并、tag、Release 和 PyPI 发布。
+
+### 本机 HCL 观察与安全说明
+
+- 已只读观察到 HCL 5.10.3 Qt 客户端暴露稳定语义 Automation ID，例如 New/Open/Save、
+  Router/Switch/Host/Link、StartAll/StopAll；这些只是本机探测证据，不是兼容性保证。
+- 当时 HCL 打开的是带未保存修改的临时工程。没有保存、丢弃、覆盖或创建工程，也没有启动设备。
+- 后续实机测试前必须由维护者处理或明确授权隔离当前临时工程；自动化不得替用户点击“不保存”。
+- 机器内存约 16 GiB，后续 Provider 必须先做资源预检并串行启动，不能直接复刻复杂示例拓扑。
+- 不得提交真实工程、设备镜像、凭据、绝对本机路径、HCL 二进制或未脱敏日志。
+
+### 建议接手顺序
+
+1. 从本分支运行完整门禁，确认控制契约提交自身可复现；
+2. 独立安全复审 `topology_control.py`、Planner 和 Port，先修复 P0/P1；
+3. 实现纯内存 PlanStore/Journal/Lease/Job 和 fake Provider saga，不接触 HCL；
+4. 实现只读 UIA capability probe，并把 HCL 版本、build、locale、session/probe fingerprint
+   固化进能力对象；
+5. 在一个全新且必须不存在的隔离工程中完成单设备 smoke，再扩展到两设备一链路；
+6. 最后才评审并注册公共 MCP Tool，随后补双制品和真实 Client 验证。
+
+### 接管命令
+
+```powershell
+git fetch --all --prune
+git switch codex/v0.2-control-plane
+git pull --ff-only
+uv sync --locked --extra dev
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py
+uv run --locked pytest -q
+```
+
+接手者应先阅读本节、`CLAUDE.md`、`docs/design.md` 和 ADR-0007，再从“未完成内容”选择任务。
+不要把下方 beta.2 历史验证结果当成 v0.2 新增代码已经通过的证据。
+
+---
+
+## beta.2 候选历史交接（保留作为只读基线证据）
+
 ## 当前版本/分支
 
 - 候选版本：`0.1.0-beta.2`（未发布）

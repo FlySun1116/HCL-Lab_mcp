@@ -9,6 +9,7 @@ from h3c_hcl_mcp.ports.approval_provider import ApprovalProvider
 from h3c_hcl_mcp.ports.audit_sink import AuditSink
 from h3c_hcl_mcp.ports.command_parser import CommandParser
 from h3c_hcl_mcp.ports.device_transport import DeviceTransport
+from h3c_hcl_mcp.ports.hcl_control_provider import HclControlProvider
 from h3c_hcl_mcp.ports.job_store import JobStore
 from h3c_hcl_mcp.ports.policy_engine import PolicyEngine
 from h3c_hcl_mcp.ports.project_repository import ProjectRepository
@@ -25,6 +26,7 @@ ALL_PORTS = [
     AuditSink,
     JobStore,
     SecretProvider,
+    HclControlProvider,
 ]
 
 
@@ -71,3 +73,53 @@ class TestPortOnlyDependOnDomain:
     def test_device_transport_uses_domain_types(self):
         src = inspect.getsource(DeviceTransport.execute)
         assert "CommandResult" in src
+
+    def test_hcl_control_provider_uses_only_typed_domain_contracts(self):
+        source = inspect.getsource(HclControlProvider)
+        assert "dict[" not in source
+        assert "Any" not in source
+        assert "HclControlCapabilities" in source
+        assert "TopologySnapshot" in source
+        assert "TopologyOperation" in source
+        assert "OperationContext" in source
+        assert "OperationReceipt" in source
+
+
+class TestHclControlProviderContract:
+    def test_has_only_three_public_methods(self):
+        methods = {
+            name
+            for name, method in inspect.getmembers(HclControlProvider, predicate=inspect.isfunction)
+            if not name.startswith("_")
+        }
+        assert methods == {"capabilities", "snapshot", "apply_operation"}
+
+    @pytest.mark.parametrize(
+        ("method_name", "parameter_names", "return_annotation"),
+        [
+            ("capabilities", ["self"], "HclControlCapabilities"),
+            ("snapshot", ["self", "project_name"], "TopologySnapshot"),
+            (
+                "apply_operation",
+                ["self", "operation", "context"],
+                "OperationReceipt",
+            ),
+        ],
+    )
+    def test_method_signatures(
+        self,
+        method_name: str,
+        parameter_names: list[str],
+        return_annotation: str,
+    ):
+        signature = inspect.signature(getattr(HclControlProvider, method_name))
+        assert list(signature.parameters) == parameter_names
+        assert signature.return_annotation == return_annotation
+
+    def test_parameter_annotations_are_typed(self):
+        snapshot_signature = inspect.signature(HclControlProvider.snapshot)
+        apply_signature = inspect.signature(HclControlProvider.apply_operation)
+
+        assert snapshot_signature.parameters["project_name"].annotation == "str"
+        assert apply_signature.parameters["operation"].annotation == "TopologyOperation"
+        assert apply_signature.parameters["context"].annotation == "OperationContext"
