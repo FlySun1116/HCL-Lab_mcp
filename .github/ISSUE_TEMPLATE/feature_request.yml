@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose a scoped capability that respects the published roadmap and safety model.
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user outcome, not only the proposed implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: roadmap
+    attributes:
+      label: Target roadmap area
+      options:
+        - v0.1 read-only HCL/Comware
+        - v0.2 SSH, plan/apply, approval, backup
+        - v0.3 NETCONF, parsers, Resources/Prompts
+        - v0.5 HTTP/OAuth/enterprise
+        - Future adapter or ecosystem work
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include MCP Tool/Port/error changes and compatibility considerations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract
+    attributes:
+      label: Contract and safety impact
+      options:
+        - label: I identified whether this changes a public Tool schema, Port, stable error code, default policy, Python/MCP major version, or license.
+          required: true
+        - label: I understand those changes require an ADR/design decision before implementation.
+          required: true
+        - label: The proposal does not depend on reverse engineering or an unpublished HCL private protocol.
+          required: true

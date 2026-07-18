@@ -1,0 +1,83 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Dependency change review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Reject vulnerable or incompatible dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          license-check: true
+          deny-licenses: >-
+            AGPL-3.0-only, AGPL-3.0-or-later,
+            GPL-2.0-only, GPL-2.0-or-later,
+            GPL-3.0-only, GPL-3.0-or-later
+
+  dependency-and-artifact-security:
+    name: Dependency, license, and artifact security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install locked security toolchain
+        run: uv sync --locked --extra dev
+      - name: Verify installed dependency consistency
+        run: uv pip check
+      - name: Export hashed runtime dependency set
+        run: >-
+          uv export --quiet --locked --no-dev --no-emit-project
+          --format requirements-txt
+          --output-file "$RUNNER_TEMP/runtime-requirements.txt"
+      - name: Audit runtime dependencies for known vulnerabilities
+        run: >-
+          uv run --locked pip-audit
+          --requirement "$RUNNER_TEMP/runtime-requirements.txt"
+          --require-hashes --strict --progress-spinner off
+      - name: Reject incompatible dependency licenses
+        env:
+          DENIED_LICENSES: >-
+            GNU General Public License v2 (GPLv2);GNU General Public License v3 (GPLv3);
+            GNU Affero General Public License v3;AGPL-3.0;GPL-2.0;GPL-3.0
+        run: uv run --locked pip-licenses --fail-on="$DENIED_LICENSES"
+      - name: Reject unsafe tracked repository files
+        run: uv run --locked python scripts/check_repository.py .
+      - name: Build release archives
+        run: uv build --clear
+      - name: Enforce repository distribution allowlist
+        run: uv run --locked python scripts/check_distribution.py dist
+
+  codeql:
+    name: CodeQL (Python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          languages: python
+      - name: Analyze Python sources
+        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          category: /language:python

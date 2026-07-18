@@ -29,35 +29,57 @@ _LOGIN_RE = re.compile(r"(?:login|Username)\s*:\s*$", re.IGNORECASE | re.MULTILI
 # Password prompt
 _PASSWORD_RE = re.compile(r"Password\s*:\s*$", re.IGNORECASE | re.MULTILINE)
 
-# Any valid prompt pattern (user view, system view, or more)
-_ANY_PROMPT = re.compile(
-    r"<[^>\r\n]+>|\[[^\]\r\n]+\]|----\s*More\s*----",
+# A CLI prompt is framing, not merely text that resembles a prompt.  Only the
+# final, otherwise-empty line in the current receive buffer may terminate a
+# response.  This prevents command output such as ``status: <failed>`` from
+# being mistaken for the device prompt.
+_FINAL_CLI_PROMPT_RE = re.compile(r"(?:^|[\r\n])[ \t]*(<[^>\r\n]+>|\[[^\]\r\n]+\])[ \t]*(?:\r?\n)?\Z")
+
+# Comware may append a Ctrl+C hint to the pagination marker.  The marker must
+# still start the final independent line.
+_FINAL_MORE_PROMPT_RE = re.compile(
+    r"(?:^|[\r\n])[ \t]*(----\s*More\s*----)[^\r\n]*(?:\r?\n)?\Z",
     re.IGNORECASE,
 )
 
 
-def detect_prompt(buffer: str) -> str | None:
-    """Extract the last CLI prompt from a buffer.
+def detect_prompt(buffer: str, expected_prompt: str | None = None) -> str | None:
+    """Extract a terminal CLI prompt from a buffer.
 
-    Scans the buffer for the last occurrence of a known prompt pattern.
-    Returns the matched prompt string, or None if no prompt is found.
+    A match must occupy the final independent line.  When ``expected_prompt``
+    is supplied, a CLI prompt must exactly match the prompt captured for this
+    read-only session.  The v0.1 command set never changes CLI view, so a mode
+    transition is ambiguous device output and must fail closed.  Pagination
+    prompts are accepted independently of the expected CLI prompt.
 
     Args:
         buffer: Raw text received from the device console.
+        expected_prompt: Previously captured prompt for this session.
 
     Returns:
         The prompt string (e.g. '<H3C>', '[H3C-GigabitEthernet1/0/1]'), or None.
     """
-    matches = list(_ANY_PROMPT.finditer(buffer))
-    if not matches:
+    more_match = _FINAL_MORE_PROMPT_RE.search(buffer)
+    if more_match is not None:
+        return more_match.group(1)
+
+    match = _FINAL_CLI_PROMPT_RE.search(buffer)
+    if match is None:
         return None
-    return matches[-1].group(0)
+    prompt = match.group(1)
+    if expected_prompt is not None and not _matches_expected_prompt(prompt, expected_prompt):
+        return None
+    return prompt
 
 
 def _find_last_prompt_match(buffer: str) -> re.Match[str] | None:
-    """Return the last regex match object for a prompt in the buffer."""
-    matches = list(_ANY_PROMPT.finditer(buffer))
-    return matches[-1] if matches else None
+    """Return the terminal CLI-prompt match object for compatibility."""
+    return _FINAL_CLI_PROMPT_RE.search(buffer)
+
+
+def _matches_expected_prompt(prompt: str, expected_prompt: str) -> bool:
+    """Require stable framing for v0.1's non-mode-changing commands."""
+    return prompt == expected_prompt
 
 
 def normalize_prompt(prompt: str) -> str:

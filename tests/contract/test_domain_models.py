@@ -186,6 +186,15 @@ class TestToolResult:
         assert r.ok is True
         assert r.data == {"status": "ok"}
         assert r.changed is False
+        assert r.content_trust == "trusted_server_data"
+
+    def test_untrusted_device_result(self):
+        r = ToolResult.success(
+            request_id="req-device",
+            data={"raw_output": "device text"},
+            content_trust="untrusted_device_output",
+        )
+        assert r.content_trust == "untrusted_device_output"
 
     def test_failure(self):
         r = ToolResult.failure(
@@ -196,6 +205,7 @@ class TestToolResult:
         assert r.ok is False
         assert r.data is not None
         assert r.data["error"]["code"] == "PROJECT_NOT_FOUND"
+        assert r.content_trust == "trusted_server_data"
 
 
 class TestChangePlan:

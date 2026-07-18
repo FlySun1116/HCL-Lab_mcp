@@ -1,0 +1,5 @@
+2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- C:\Users\lab\HCL\Projects\hcl_old\hcl_old.net
+2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)
+2026-07-14 23:11:00,001 - HCL topo1 -  INFO: close telnet_server strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)
+2026-07-14 23:12:00,001 - HCL topo1 -  INFO: Workspace 1205 --- C:\Users\lab\AppData\Local\Temp\hcl_new\hcl_new.net
+2026-07-14 23:12:05,001 - HCL topo1 -  INFO: create_telnet_server success strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)

@@ -20,7 +20,10 @@ class TestAllowedCommands:
         is_valid, reason = validate_command(command, CommandType.DISPLAY)
         assert is_valid, f"Expected '{command}' to be allowed, got: {reason}"
 
-    @pytest.mark.parametrize("command", ALLOWED_DIAGNOSTIC_COMMANDS)
+    @pytest.mark.parametrize(
+        "command",
+        [f"{command} 192.0.2.1" for command in ALLOWED_DIAGNOSTIC_COMMANDS],
+    )
     def test_diagnostic_commands_allowed(self, command: str) -> None:
         is_valid, reason = validate_command(command, CommandType.DIAGNOSTIC)
         assert is_valid, f"Expected '{command}' to be allowed, got: {reason}"
@@ -215,6 +218,38 @@ class TestPingInjection:
         is_valid, reason = validate_command("ping 127.0.0.1", CommandType.DISPLAY)
         assert not is_valid
         assert reason and ("allowlist" in reason.lower() or "not in" in reason.lower())
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ping -c 101 192.0.2.1",
+            "ping -c 5 192.0.2.1 -c 100",
+            "ping -s 65500 192.0.2.1",
+            "ping -c 5 host name",
+            "tracert -m 256 192.0.2.1",
+            "tracert -m 30 192.0.2.1 -m 255",
+            "tracert -a 192.0.2.2 192.0.2.1",
+        ],
+    )
+    def test_unsupported_or_oversized_diagnostic_arguments_rejected(self, command: str) -> None:
+        is_valid, reason = validate_command(command, CommandType.DIAGNOSTIC)
+        assert not is_valid
+        assert reason is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ping 192.0.2.1",
+            "ping -c 100 host.example",
+            "ping -c 1 ::1",
+            "tracert 192.0.2.1",
+            "tracert -m 255 2001:db8::1",
+        ],
+    )
+    def test_supported_diagnostic_arguments_allowed(self, command: str) -> None:
+        is_valid, reason = validate_command(command, CommandType.DIAGNOSTIC)
+        assert is_valid
+        assert reason is None
 
 
 class TestSQLInjectionDefense:

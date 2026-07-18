@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from h3c_hcl_mcp.infrastructure.audit.redact import (
     quick_redact,
     redact_sensitive,
@@ -41,6 +43,40 @@ class TestPasswordRedaction:
         assert "supersecret123" not in result
         assert "secret ***" in result
 
+    @pytest.mark.parametrize(
+        "text, secret",
+        [
+            (
+                "super password role network-admin hash SUPER_HASH_SECRET",
+                "SUPER_HASH_SECRET",
+            ),
+            (
+                "super password role level-15 cipher SUPER_CIPHER_SECRET",
+                "SUPER_CIPHER_SECRET",
+            ),
+            ("super password simple SUPER_SIMPLE_SECRET", "SUPER_SIMPLE_SECRET"),
+            (
+                "SUPER   PASSWORD   ROLE   NETWORK-ADMIN   CiPhEr   MIXED_SUPER_SECRET",
+                "MIXED_SUPER_SECRET",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("redactor", [redact_sensitive, quick_redact])
+    def test_super_password_line_is_fully_redacted(
+        self,
+        text: str,
+        secret: str,
+        redactor,
+    ) -> None:
+        result = redactor(text)
+
+        assert secret not in result
+        assert "role" not in result.casefold()
+        assert "hash" not in result.casefold()
+        assert "cipher" not in result.casefold()
+        assert "simple" not in result.casefold()
+        assert result == "super password *** REDACTED ***"
+
 
 class TestSNMPRedaction:
     """SNMP community strings and credentials must be redacted."""
@@ -62,6 +98,111 @@ class TestSNMPRedaction:
         result = redact_sensitive(text)
         assert "mystring" not in result
         assert "***" in result
+
+    @pytest.mark.parametrize(
+        "text, secret",
+        [
+            ("snmp-agent community read cipher CIPHERTEXT_SNMP", "CIPHERTEXT_SNMP"),
+            ("snmp-agent community write simple PRIVATE_COMMUNITY", "PRIVATE_COMMUNITY"),
+            ("SNMP-AGENT COMMUNITY READ CiPhEr MIXED_CASE_SECRET", "MIXED_CASE_SECRET"),
+        ],
+    )
+    def test_snmp_community_qualifier_does_not_leave_real_secret(
+        self,
+        text: str,
+        secret: str,
+    ) -> None:
+        result = redact_sensitive(text)
+        assert secret not in result
+        assert "cipher" not in result.casefold()
+        assert "simple" not in result.casefold()
+
+
+class TestComwareAuthenticationLineRedaction:
+    """Credential syntax families must redact the secret after qualifiers."""
+
+    @pytest.mark.parametrize(
+        "text, secret",
+        [
+            (
+                "ntp-service authentication-keyid 1 authentication-mode md5 cipher NTP_CIPHER_SECRET",
+                "NTP_CIPHER_SECRET",
+            ),
+            (
+                "ntp-service authentication-keyid 2 authentication-mode sha simple NTP_SIMPLE_SECRET",
+                "NTP_SIMPLE_SECRET",
+            ),
+            (
+                "NTP-SERVICE AUTHENTICATION-KEYID 3 AUTHENTICATION-MODE SHA256 NTP_PLAIN_SECRET",
+                "NTP_PLAIN_SECRET",
+            ),
+            ("key authentication cipher RADIUS_AUTH_SECRET", "RADIUS_AUTH_SECRET"),
+            ("key accounting simple RADIUS_ACCT_SECRET", "RADIUS_ACCT_SECRET"),
+            ("KEY AUTHENTICATION SIMPLE TACACS_AUTH_SECRET", "TACACS_AUTH_SECRET"),
+            ("Key Accounting Cipher TACACS_ACCT_SECRET", "TACACS_ACCT_SECRET"),
+        ],
+    )
+    def test_qualified_secret_is_fully_removed(self, text: str, secret: str) -> None:
+        result = redact_sensitive(text)
+        assert secret not in result
+        assert "***" in result
+
+    def test_multiple_credentials_on_one_line_are_all_removed(self) -> None:
+        text = "key authentication cipher FIRST_SECRET key accounting simple SECOND_SECRET"
+        result = redact_sensitive(text)
+        assert "FIRST_SECRET" not in result
+        assert "SECOND_SECRET" not in result
+        assert "***" in result
+
+    @pytest.mark.parametrize(
+        "redactor",
+        [redact_sensitive, quick_redact],
+    )
+    def test_fast_and_full_redaction_cover_comware_credential_families(self, redactor) -> None:
+        text = (
+            "snmp-agent community read cipher SNMP_SECRET\n"
+            "ntp-service authentication-keyid 1 authentication-mode md5 cipher NTP_SECRET\n"
+            "key authentication cipher AAA_SECRET"
+        )
+        result = redactor(text)
+        assert "SNMP_SECRET" not in result
+        assert "NTP_SECRET" not in result
+        assert "AAA_SECRET" not in result
+
+    def test_snmpv3_auth_and_privacy_secrets(self) -> None:
+        text = (
+            "snmp-agent usm-user v3 netops group1 authentication-mode sha auth-secret "
+            "privacy-mode aes128 priv-secret"
+        )
+
+        result = redact_sensitive(text)
+
+        assert "auth-secret" not in result
+        assert "priv-secret" not in result
+        assert result == "snmp-agent usm-user *** REDACTED ***"
+
+
+class TestPrivateKeyRedaction:
+    @pytest.mark.parametrize(
+        "label",
+        ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "OPENSSH PRIVATE KEY", "ENCRYPTED PRIVATE KEY"],
+    )
+    def test_complete_private_key_blocks(self, label: str) -> None:
+        text = f"before\n-----BEGIN {label}-----\nvery-secret-key\n-----END {label}-----\nafter"
+
+        result = redact_sensitive(text)
+
+        assert "very-secret-key" not in result
+        assert "BEGIN" not in result
+        assert result == "before\n*** PRIVATE MATERIAL REDACTED ***\nafter"
+
+    def test_truncated_private_key_block(self) -> None:
+        text = "before\n-----BEGIN OPENSSH PRIVATE KEY-----\ntruncated-secret"
+
+        result = redact_sensitive(text)
+
+        assert "truncated-secret" not in result
+        assert result == "before\n*** PRIVATE MATERIAL REDACTED ***"
 
 
 class TestLocalUserRedaction:
@@ -87,6 +228,44 @@ class TestKeyRedaction:
         text = "pre-shared-key simple vpnsecret123"
         result = redact_sensitive(text)
         assert "vpnsecret123" not in result
+
+    @pytest.mark.parametrize("redactor", [redact_sensitive, quick_redact])
+    @pytest.mark.parametrize(
+        ("text", "secret", "expected"),
+        [
+            (
+                "key-string cipher KEYCHAIN_SECRET",
+                "KEYCHAIN_SECRET",
+                "key-string *** REDACTED ***",
+            ),
+            (
+                "wep key 1 wep40 pass-phrase cipher WEP_SECRET",
+                "WEP_SECRET",
+                "wep key *** REDACTED ***",
+            ),
+            (
+                "preshared-key pass-phrase cipher WLAN_SECRET",
+                "WLAN_SECRET",
+                "preshared-key *** REDACTED ***",
+            ),
+            (
+                "pre-shared-key cipher IPSEC_SECRET",
+                "IPSEC_SECRET",
+                "preshared-key *** REDACTED ***",
+            ),
+        ],
+    )
+    def test_comware_key_families_are_fully_redacted(
+        self,
+        redactor,
+        text: str,
+        secret: str,
+        expected: str,
+    ) -> None:
+        result = redactor(text)
+
+        assert secret not in result
+        assert result == expected
         assert "***" in result
 
     def test_authentication_key(self) -> None:
@@ -100,6 +279,16 @@ class TestKeyRedaction:
         result = redact_sensitive(text)
         assert "mykeyvalue" not in result
         assert "***" in result
+
+    @pytest.mark.parametrize(
+        "label",
+        ["PRIVATE KEY", "RSA PRIVATE KEY", "OPENSSH PRIVATE KEY", "EC PRIVATE KEY"],
+    )
+    def test_existing_private_key_redaction_remains_fail_closed(self, label: str) -> None:
+        text = f"-----BEGIN {label}-----\nPRIVATE_MATERIAL\n-----END {label}-----"
+        result = redact_sensitive(text)
+        assert "PRIVATE_MATERIAL" not in result
+        assert "BEGIN" not in result
 
 
 class TestNonSensitivePreservation:

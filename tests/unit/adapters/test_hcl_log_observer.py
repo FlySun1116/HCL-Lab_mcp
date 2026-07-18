@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from h3c_hcl_mcp.adapters.hcl.log_observer import (
     LogEventType,
     LogObserver,
@@ -25,6 +27,11 @@ class TestParseTimestamp:
         assert dt.hour == 12
         assert dt.minute == 30
         assert dt.second == 45
+
+    def test_real_hcl_millisecond_timestamp(self):
+        dt = parse_timestamp("2026-07-14 23:10:34,113")
+        assert dt is not None
+        assert dt.microsecond == 113000
 
     def test_invalid_timestamp_returns_none(self):
         assert parse_timestamp("not a timestamp") is None
@@ -66,6 +73,39 @@ class TestParseLogLine:
         assert event.event_type == LogEventType.CONSOLE_PORT_RELEASED
         assert event.device_id == 2
         assert event.console_port == 5001
+
+    def test_real_hcl_project_bound(self):
+        line = (
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_sample_real\hcl_sample_real.net"
+        )
+        event = parse_log_line(line)
+        assert event.event_type == LogEventType.PROJECT_BOUND
+        assert event.topology_alias == "topo1"
+        assert event.project_id == "hcl_sample_real"
+        assert event.project_path is not None
+
+    def test_real_hcl_console_created(self):
+        line = (
+            "2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device2, telnet_port:30002)"
+        )
+        event = parse_log_line(line)
+        assert event.event_type == LogEventType.CONSOLE_CREATED
+        assert event.topology_alias == "topo1"
+        assert event.device_id == 2
+        assert event.console_port == 30002
+
+    def test_real_hcl_console_closed(self):
+        line = (
+            "2026-07-14 23:11:00,001 - HCL topo1 -  INFO: close telnet_server "
+            r"strPipeName:\\.\pipe\topo1-device2, telnet_port:30002)"
+        )
+        event = parse_log_line(line)
+        assert event.event_type == LogEventType.CONSOLE_CLOSED
+        assert event.topology_alias == "topo1"
+        assert event.device_id == 2
+        assert event.console_port == 30002
 
     def test_unknown_line(self):
         line = "This is some random log output"
@@ -137,6 +177,46 @@ class TestExtractEndpointsFromEvents:
         endpoints = extract_endpoints_from_events([])
         assert len(endpoints) == 0
 
+    def test_real_events_are_project_scoped(self):
+        lines = [
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_alpha\hcl_alpha.net",
+            "2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)",
+        ]
+        events = parse_log_lines(lines)
+
+        alpha = extract_endpoints_from_events(events, project_id="hcl_alpha")
+        beta = extract_endpoints_from_events(events, project_id="hcl_beta")
+
+        assert alpha[1][0].port == 30001
+        assert beta == {}
+
+    def test_alias_rebind_invalidates_old_project_endpoints(self):
+        lines = [
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_old\hcl_old.net",
+            "2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)",
+            "2026-07-14 23:12:00,001 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\AppData\Local\Temp\hcl_new\hcl_new.net",
+        ]
+        events = parse_log_lines(lines)
+
+        assert extract_endpoints_from_events(events, project_id="hcl_old") == {}
+
+    def test_real_close_removes_candidate(self):
+        lines = [
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_alpha\hcl_alpha.net",
+            "2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)",
+            "2026-07-14 23:11:00,001 - HCL topo1 -  INFO: close telnet_server "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)",
+        ]
+
+        assert extract_endpoints_from_events(parse_log_lines(lines), project_id="hcl_alpha") == {}
+
 
 class TestLogObserver:
     """Test the LogObserver class."""
@@ -202,3 +282,125 @@ class TestLogObserver:
         )
 
         assert observer.get_endpoint(1) is None
+
+    def test_load_files_orders_events_by_timestamp(self, tmp_path):
+        newer_file = tmp_path / "HCL.log"
+        older_file = tmp_path / "HCL.log.rotated"
+        newer_file.write_text(
+            "2026-07-14 23:11:00,001 - HCL topo1 -  INFO: close telnet_server "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)" + "\n",
+            encoding="utf-8",
+        )
+        older_file.write_text(
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_alpha\hcl_alpha.net" + "\n"
+            "2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)" + "\n",
+            encoding="utf-8",
+        )
+
+        observer = LogObserver()
+        observer.load_files([str(newer_file), str(older_file)])
+
+        assert observer.get_project_endpoint("hcl_alpha", 1) is None
+        assert observer.is_device_closed("hcl_alpha", 1)
+
+    def test_load_files_does_not_correlate_binding_across_bounded_snapshot_gap(self, tmp_path):
+        log_file = tmp_path / "HCL.log"
+        binding = (
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_alpha\hcl_alpha.net"
+            "\n"
+        )
+        created = (
+            "2026-07-14 23:10:45,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30001)"
+            "\n"
+        )
+        log_file.write_bytes(binding.encode() + (b"X" * 8192) + b"\n" + created.encode())
+
+        observer = LogObserver()
+        observer.load_files([str(log_file)], max_bytes_per_file=1024)
+
+        assert observer.get_project_endpoint("hcl_alpha", 1) is None
+
+    def test_load_files_accepts_explicit_rebinding_in_contiguous_tail(self, tmp_path):
+        log_file = tmp_path / "HCL.log"
+        old_binding = (
+            "2026-07-14 23:10:34,113 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_old\hcl_old.net"
+            "\n"
+        )
+        new_binding = (
+            "2026-07-14 23:12:00,001 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_new\hcl_new.net"
+            "\n"
+        )
+        created = (
+            "2026-07-14 23:12:01,001 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device1, telnet_port:30009)"
+            "\n"
+        )
+        log_file.write_bytes(
+            old_binding.encode() + (b"X" * 8192) + b"\n" + new_binding.encode() + created.encode()
+        )
+
+        observer = LogObserver()
+        observer.load_files([str(log_file)], max_bytes_per_file=1024)
+
+        assert observer.get_project_endpoint("hcl_old", 1) is None
+        endpoint = observer.get_project_endpoint("hcl_new", 1)
+        assert endpoint is not None
+        assert endpoint.port == 30009
+
+    def test_bounded_snapshot_gap_invalidates_all_prior_state(self, tmp_path):
+        older_file = tmp_path / "HCL.log.1"
+        current_file = tmp_path / "HCL.log"
+        older_file.write_text(
+            "2026-07-14 23:10:00 Device old (id=8) started, console port: 5008\n"
+            "2026-07-14 23:10:01 - HCL topo1 -  INFO: Workspace 1205 --- "
+            r"C:\Users\lab\HCL\Projects\hcl_old\hcl_old.net"
+            "\n"
+            "2026-07-14 23:10:01,500 - HCL topo1 -  INFO: create_telnet_server success "
+            r"strPipeName:\\.\pipe\topo1-device7, telnet_port:30007)"
+            "\n"
+            "2026-07-14 23:10:02 - HCL topo1 -  INFO: close telnet_server "
+            r"strPipeName:\\.\pipe\topo1-device9, telnet_port:30009)"
+            "\n",
+            encoding="utf-8",
+        )
+        current_file.write_bytes(
+            b"untrusted-prefix\n" + (b"X" * 8192) + b"\n"
+            b"2026-07-14 23:12:00 - HCL topo1 -  INFO: create_telnet_server success "
+            b"strPipeName:\\\\.\\pipe\\topo1-device10, telnet_port:30010)\n"
+        )
+
+        observer = LogObserver()
+        observer.load_files(
+            [str(older_file), str(current_file)],
+            max_bytes_per_file=1024,
+        )
+
+        assert observer.get_endpoint(8) is None
+        assert observer.get_project_endpoint("hcl_old", 7) is None
+        assert not observer.is_device_closed("hcl_old", 9)
+        assert observer.get_endpoint(10) is None
+
+    def test_load_files_limits_rotated_file_count(self, tmp_path):
+        paths = []
+        for device_id in range(1, 4):
+            path = tmp_path / f"HCL.log.{device_id}"
+            path.write_text(
+                f"2024-01-15 12:00:0{device_id} Device S6850_{device_id} "
+                f"(id={device_id}) started, console port: 500{device_id}\n",
+                encoding="utf-8",
+            )
+            os.utime(path, (device_id, device_id))
+            paths.append(str(path))
+
+        observer = LogObserver()
+        observer.load_files(paths, max_files=2)
+
+        assert observer.get_endpoint(1) is None
+        assert observer.get_endpoint(2) is not None
+        assert observer.get_endpoint(3) is not None

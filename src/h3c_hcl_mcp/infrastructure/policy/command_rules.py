@@ -7,6 +7,7 @@ v0.1 is read-only: only display and diagnostic commands are allowed.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from re import Pattern
 
 from h3c_hcl_mcp.domain.command import CommandType
@@ -104,7 +105,7 @@ INJECTION_PATTERNS: list[tuple[Pattern[str], str]] = [
 ]
 
 
-def _command_matches_prefix(command: str, prefixes: list[str]) -> bool:
+def _command_matches_prefix(command: str, prefixes: Sequence[str]) -> bool:
     """Check if `command` starts with one of the allowed prefixes."""
     lowered = command.strip().lower()
     return any(lowered == prefix or lowered.startswith(prefix + " ") for prefix in prefixes)
@@ -142,7 +143,13 @@ def _check_injection_patterns(command: str) -> str | None:
     return None
 
 
-def validate_command(command: str, command_type: CommandType) -> tuple[bool, str | None]:
+def validate_command(
+    command: str,
+    command_type: CommandType,
+    *,
+    allowed_display_prefixes: Sequence[str] | None = None,
+    denied_patterns: Sequence[str] | None = None,
+) -> tuple[bool, str | None]:
     """Validate a command against the security policy.
 
     Checks:
@@ -171,10 +178,24 @@ def validate_command(command: str, command_type: CommandType) -> tuple[bool, str
     if denied_reason:
         return False, denied_reason
 
-    # Step 3: allowlist check by command type
+    # Step 3: optional operator deny rules.  These are literal,
+    # case-insensitive substrings and can only make the built-in policy more
+    # restrictive; they can never bypass the mandatory checks above.
+    lowered_command = command.casefold()
+    for pattern in denied_patterns or ():
+        normalized_pattern = pattern.strip().casefold()
+        if normalized_pattern and normalized_pattern in lowered_command:
+            return False, "command rejected by configured deny pattern"
+
+    # Step 4: built-in allowlist check by command type
     if command_type == CommandType.DISPLAY:
         if not _command_matches_prefix(command, ALLOWED_DISPLAY_COMMANDS):
             return False, f"command not in display allowlist: '{command}'"
+        if allowed_display_prefixes and not _command_matches_prefix(
+            command,
+            [prefix.strip().casefold() for prefix in allowed_display_prefixes if prefix.strip()],
+        ):
+            return False, "command not in configured display allowlist"
 
     elif command_type == CommandType.DIAGNOSTIC:
         if not _command_matches_prefix(command, ALLOWED_DIAGNOSTIC_COMMANDS):
@@ -186,7 +207,7 @@ def validate_command(command: str, command_type: CommandType) -> tuple[bool, str
     else:
         return False, f"unknown command type: '{command_type.value}'"
 
-    # Step 4: additional ping/tracert validation — only allow safe arguments
+    # Step 5: additional ping/tracert validation — only allow safe arguments
     if command_type == CommandType.DIAGNOSTIC:
         diagnostic_reason = _validate_diagnostic_args(command)
         if diagnostic_reason:
@@ -220,5 +241,29 @@ def _validate_diagnostic_args(command: str) -> str | None:
     for pattern, reason in ping_injection_patterns:
         if pattern.search(lowered):
             return reason
+
+    safe_destination = r"[A-Za-z0-9:.][A-Za-z0-9._:-]{0,252}"
+    if lowered.startswith("ping"):
+        match = re.fullmatch(
+            rf"ping(?:\s+-c\s+([0-9]+))?\s+({safe_destination})",
+            command.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return "ping accepts only an optional '-c 1..100' and one safe destination"
+        count = int(match.group(1)) if match.group(1) is not None else 5
+        if not 1 <= count <= 100:
+            return "ping count must be between 1 and 100"
+    elif lowered.startswith("tracert"):
+        match = re.fullmatch(
+            rf"tracert(?:\s+-m\s+([0-9]+))?\s+({safe_destination})",
+            command.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return "tracert accepts only an optional '-m 1..255' and one safe destination"
+        max_hops = int(match.group(1)) if match.group(1) is not None else 30
+        if not 1 <= max_hops <= 255:
+            return "tracert max hops must be between 1 and 255"
 
     return None

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from h3c_hcl_mcp.domain.errors import DomainError
 from h3c_hcl_mcp.domain.result import ToolResult
@@ -33,7 +34,9 @@ def register(mcp: FastMCP, **deps: Any) -> None:
             "available console/SSH endpoints for each device."
         ),
     )
-    async def hcl_get_runtime(project_id: str) -> ToolResult:
+    async def hcl_get_runtime(
+        project_id: Annotated[str, Field(min_length=1, max_length=256)],
+    ) -> ToolResult:
         """Get runtime state for all devices in an HCL project.
 
         Args:
@@ -45,14 +48,6 @@ def register(mcp: FastMCP, **deps: Any) -> None:
         try:
             # Validate project exists before checking runtime
             await project_repo.get_project(project_id)
-
-            # Feed topology devices into runtime discovery for auto-detection
-            topology = await project_repo.get_topology(project_id)
-            if hasattr(runtime_disc, "set_topology_devices"):
-                runtime_disc.set_topology_devices(
-                    project_id,
-                    [(d.device_id, d.name) for d in topology.devices],
-                )
 
             runtimes = await runtime_disc.discover_project(project_id)
 
@@ -91,6 +86,7 @@ def register(mcp: FastMCP, **deps: Any) -> None:
                 },
                 target={"project_id": project_id},
                 duration_ms=round(duration_ms, 2),
+                content_trust="untrusted_device_output",
             )
 
         except DomainError as e:

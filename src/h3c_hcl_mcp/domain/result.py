@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,7 +26,11 @@ class ToolResult(BaseModel):
     data: dict[str, Any] | None = Field(default=None, description="Tool-specific structured result")
     warnings: list[str] = Field(default_factory=list, description="Non-fatal warnings")
     duration_ms: float = Field(default=0.0, description="Server-side execution duration")
-    truncated: bool = Field(default=False, description="Whether output was truncated")
+    truncated: bool = Field(default=False, description="Whether any public output was truncated")
+    content_trust: Literal["trusted_server_data", "untrusted_device_output"] = Field(
+        default="trusted_server_data",
+        description="Whether result content originates from untrusted external data",
+    )
 
     @classmethod
     def success(
@@ -39,6 +43,7 @@ class ToolResult(BaseModel):
         warnings: list[str] | None = None,
         duration_ms: float = 0.0,
         truncated: bool = False,
+        content_trust: Literal["trusted_server_data", "untrusted_device_output"] = "trusted_server_data",
     ) -> ToolResult:
         return cls(
             ok=True,
@@ -49,6 +54,7 @@ class ToolResult(BaseModel):
             warnings=warnings or [],
             duration_ms=duration_ms,
             truncated=truncated,
+            content_trust=content_trust,
         )
 
     @classmethod

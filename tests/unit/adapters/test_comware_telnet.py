@@ -15,12 +15,18 @@ import pathlib
 
 import pytest
 
+from h3c_hcl_mcp.adapters.comware.base import SessionState
 from h3c_hcl_mcp.adapters.comware.console_telnet import (
     ConsoleTelnetTransport,
     _filter_iac,
+    _TelnetIACFilter,
 )
 from h3c_hcl_mcp.adapters.comware.prompt import detect_prompt
 from h3c_hcl_mcp.adapters.comware.session import DeviceSession
+from h3c_hcl_mcp.adapters.comware.session_manager import (
+    DeviceSessionManager,
+    SessionManagerTransport,
+)
 from h3c_hcl_mcp.domain.command import (
     CommandRequest,
     CommandTarget,
@@ -43,6 +49,8 @@ WILL = 0xFB
 WONT = 0xFC
 DO = 0xFD
 DONT = 0xFE
+SB = 0xFA
+SE = 0xF0
 
 # ---- Fake Telnet Server ----
 
@@ -75,6 +83,7 @@ class FakeComwareTelnetServer:
         self.disconnect_after = disconnect_after  # disconnect after N commands
 
         self._server: asyncio.AbstractServer | None = None
+        self._client_writers: set[asyncio.StreamWriter] = set()
         self._command_count = 0
         self._command_handlers: dict[str, str] = {}
         self._paginated_output: dict[str, list[str]] = {}
@@ -108,9 +117,16 @@ class FakeComwareTelnetServer:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
+        writers = list(self._client_writers)
+        for writer in writers:
+            writer.close()
+        if writers:
+            await asyncio.gather(*(writer.wait_closed() for writer in writers), return_exceptions=True)
+        self._client_writers.clear()
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Handle a single client connection."""
+        self._client_writers.add(writer)
         self._command_count = 0
 
         if self.startup_delay > 0:
@@ -159,6 +175,10 @@ class FakeComwareTelnetServer:
             writer.write(response.encode("ascii"))
             writer.write(f"\r\n{self.prompt}".encode("ascii"))
             await writer.drain()
+
+        writer.close()
+        await asyncio.gather(writer.wait_closed(), return_exceptions=True)
+        self._client_writers.discard(writer)
 
     def _build_paginated(self, pages: list[str]) -> str:
         """Build paginated response with ---- More ---- markers between pages."""
@@ -219,6 +239,20 @@ class TestIACFilter:
         data = b"before" + bytes([IAC, 0xFA, 0x18, 0x01, IAC, 0xF0]) + b"after"
         assert _filter_iac(data) == b"beforeafter"
 
+    def test_fragmented_negotiation_is_filtered_across_chunks(self):
+        decoder = _TelnetIACFilter()
+
+        chunks = [
+            b"before" + bytes([IAC]),
+            bytes([WILL]),
+            b"\x01middle" + bytes([IAC, SB, 0x18]),
+            b"\x01terminal",
+            bytes([IAC]),
+            bytes([SE]) + b"after",
+        ]
+
+        assert b"".join(decoder.feed(chunk) for chunk in chunks) == b"beforemiddleafter"
+
 
 # ---- Transport Tests ----
 
@@ -265,6 +299,239 @@ class TestConsoleTelnetTransport:
         assert session.state.value == "ready"
         await transport.close()
 
+    async def test_connect_rejects_non_loopback_console_endpoint(self, transport):
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="192.0.2.10",
+            port=30000,
+            source=DiscoverySource.MANUAL,
+        )
+
+        with pytest.raises(DomainError) as exc:
+            await transport.connect(endpoint)
+
+        assert exc.value.code == ErrorCode.INVALID_ARGUMENT
+        assert transport._connected is False
+
+    async def test_connect_rejects_unsupported_ssh_endpoint(self, transport):
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.SSH,
+            host="127.0.0.1",
+            port=22,
+            source=DiscoverySource.MANUAL,
+        )
+
+        with pytest.raises(DomainError) as exc:
+            await transport.connect(endpoint)
+
+        assert exc.value.code == ErrorCode.INVALID_ARGUMENT
+        assert transport._connected is False
+
+    async def test_session_manager_executes_with_project_scoped_runtime_endpoint(self, server):
+        server.register_command("display version", "H3C Comware Software, Version 7.1")
+        manager = DeviceSessionManager(connect_timeout_seconds=2)
+        transport = SessionManagerTransport(manager)
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=server.actual_port,
+            source=DiscoverySource.PROBE,
+            confidence=1.0,
+            extra={"project_id": "lab", "device_id": "1"},
+        )
+        request = CommandRequest(
+            target=CommandTarget(project_id="lab", device_id=1, device_name="S6850_1"),
+            command="display version",
+            command_type=CommandType.DISPLAY,
+        )
+
+        try:
+            await transport.connect(endpoint)
+            result = await transport.execute(request)
+        finally:
+            await manager.close_all()
+
+        assert "H3C Comware Software" in result.raw_output
+
+    async def test_session_manager_keeps_concurrent_devices_isolated(self):
+        first_server = FakeComwareTelnetServer(prompt="<FIRST>")
+        second_server = FakeComwareTelnetServer(prompt="<SECOND>")
+        first_server.register_command("display version", "FIRST DEVICE")
+        second_server.register_command("display version", "SECOND DEVICE")
+        await first_server.start()
+        await second_server.start()
+        manager = DeviceSessionManager(connect_timeout_seconds=2)
+        transport = SessionManagerTransport(manager)
+
+        async def execute(device_id: int, port: int) -> str:
+            endpoint = RuntimeEndpoint(
+                transport=TransportType.CONSOLE_TELNET,
+                host="127.0.0.1",
+                port=port,
+                source=DiscoverySource.PROBE,
+                confidence=1.0,
+                extra={"project_id": "lab", "device_id": str(device_id)},
+            )
+            request = CommandRequest(
+                target=CommandTarget(project_id="lab", device_id=device_id),
+                command="display version",
+            )
+            await transport.connect(endpoint)
+            await asyncio.sleep(0)
+            try:
+                result = await transport.execute(request)
+                return result.raw_output
+            finally:
+                await transport.close()
+
+        try:
+            first_output, second_output = await asyncio.gather(
+                execute(1, first_server.actual_port),
+                execute(2, second_server.actual_port),
+            )
+        finally:
+            await manager.close_all()
+            await first_server.stop()
+            await second_server.stop()
+
+        assert "FIRST DEVICE" in first_output
+        assert "SECOND DEVICE" in second_output
+
+    async def test_session_manager_enforces_global_connection_limit(self):
+        first_server = FakeComwareTelnetServer(prompt="<FIRST>")
+        second_server = FakeComwareTelnetServer(prompt="<SECOND>")
+        await first_server.start()
+        await second_server.start()
+        manager = DeviceSessionManager(connect_timeout_seconds=2, max_sessions=1)
+        transport = SessionManagerTransport(manager)
+
+        def endpoint(device_id: int, port: int) -> RuntimeEndpoint:
+            return RuntimeEndpoint(
+                transport=TransportType.CONSOLE_TELNET,
+                host="127.0.0.1",
+                port=port,
+                source=DiscoverySource.PROBE,
+                extra={"project_id": "lab", "device_id": str(device_id)},
+            )
+
+        try:
+            await transport.connect(endpoint(1, first_server.actual_port))
+            await transport.close()
+            with pytest.raises(DomainError) as exc:
+                await transport.connect(endpoint(2, second_server.actual_port))
+            assert exc.value.code == ErrorCode.CONCURRENCY_CONFLICT
+            assert exc.value.details == {"max_sessions": 1}
+        finally:
+            await manager.close_all()
+            await first_server.stop()
+            await second_server.stop()
+
+    async def test_session_manager_reconnects_after_command_limit(self):
+        server = FakeComwareTelnetServer(prompt="<LIMITED>")
+        server.register_command("display version", "VERSION")
+        await server.start()
+        manager = DeviceSessionManager(
+            connect_timeout_seconds=2,
+            max_commands_per_session=1,
+        )
+        transport = SessionManagerTransport(manager)
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=server.actual_port,
+            source=DiscoverySource.PROBE,
+            extra={"project_id": "lab", "device_id": "1"},
+        )
+        request = CommandRequest(
+            target=CommandTarget(project_id="lab", device_id=1),
+            command="display version",
+        )
+
+        try:
+            await transport.connect(endpoint)
+            underlying = manager.get_or_create_transport("lab", 1)
+            first_writer = underlying._writer
+            await transport.execute(request)
+            await transport.close()
+
+            await transport.connect(endpoint)
+            assert underlying._writer is not first_writer
+            assert manager.get_or_create_session("lab", 1).command_count == 0
+        finally:
+            await manager.close_all()
+            await server.stop()
+
+    async def test_session_manager_reconnects_after_idle_timeout(self):
+        server = FakeComwareTelnetServer(prompt="<IDLE>")
+        await server.start()
+        manager = DeviceSessionManager(
+            connect_timeout_seconds=2,
+            idle_timeout_seconds=0.1,
+        )
+        transport = SessionManagerTransport(manager)
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=server.actual_port,
+            source=DiscoverySource.PROBE,
+            extra={"project_id": "lab", "device_id": "1"},
+        )
+
+        try:
+            await transport.connect(endpoint)
+            underlying = manager.get_or_create_transport("lab", 1)
+            first_writer = underlying._writer
+            await transport.close()
+            await asyncio.sleep(0.11)
+
+            await transport.connect(endpoint)
+            assert underlying._writer is not first_writer
+        finally:
+            await manager.close_all()
+            await server.stop()
+
+    async def test_session_manager_serializes_one_hundred_same_device_commands(self):
+        server = FakeComwareTelnetServer(prompt="<SERIAL>")
+        command_count = 100
+        for index in range(command_count):
+            server.register_command(f"display test {index}", f"@@RESULT-{index:03d}@@")
+        await server.start()
+        manager = DeviceSessionManager(connect_timeout_seconds=2)
+        transport = SessionManagerTransport(manager)
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=server.actual_port,
+            source=DiscoverySource.PROBE,
+            confidence=1.0,
+            extra={"project_id": "lab", "device_id": "1"},
+        )
+
+        async def execute(index: int) -> str:
+            request = CommandRequest(
+                target=CommandTarget(project_id="lab", device_id=1),
+                command=f"display test {index}",
+            )
+            await transport.connect(endpoint)
+            await asyncio.sleep(0)
+            try:
+                result = await transport.execute(request)
+                return result.raw_output
+            finally:
+                await transport.close()
+
+        try:
+            outputs = await asyncio.gather(*(execute(index) for index in range(command_count)))
+        finally:
+            await manager.close_all()
+            await server.stop()
+
+        for index, output in enumerate(outputs):
+            assert f"@@RESULT-{index:03d}@@" in output
+            assert all(
+                f"@@RESULT-{other:03d}@@" not in output for other in range(command_count) if other != index
+            )
+
     async def test_connect_refused(self, transport):
         """Connect to a closed port should raise CONNECTION_FAILED."""
         # Use a port that is very unlikely to be open
@@ -296,6 +563,61 @@ class TestConsoleTelnetTransport:
         assert "H3C Comware" in result.raw_output
         assert result.prompt_detected is not None
         await transport.close()
+
+    async def test_embedded_prompt_like_output_does_not_cross_command_frames(self):
+        """Delayed <fake>/[fake] text must not terminate a response early."""
+
+        async def _delayed_prompt_like_server(reader, writer):
+            writer.write(b"\r\n<H3C>")
+            await writer.drain()
+            try:
+                first_command = await reader.readline()
+                assert first_command.strip() == b"display first"
+                writer.write(b"\r\ndisplay first\r\nresult contains <fake>\r\n")
+                await writer.drain()
+                await asyncio.sleep(0.35)
+                writer.write(b"result contains [fake]\r\n")
+                await writer.drain()
+                await asyncio.sleep(0.35)
+                writer.write(b"FIRST COMPLETE\r\n<H3C>")
+                await writer.drain()
+
+                second_command = await reader.readline()
+                assert second_command.strip() == b"display second"
+                writer.write(b"\r\ndisplay second\r\nSECOND COMPLETE\r\n<H3C>")
+                await writer.drain()
+                await reader.read()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(_delayed_prompt_like_server, "127.0.0.1", 0)
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=server.sockets[0].getsockname()[1],
+            source=DiscoverySource.MANUAL,
+            confidence=1.0,
+        )
+        transport = ConsoleTelnetTransport(DeviceSession(device_id=17, device_name="framing"))
+        target = CommandTarget(project_id="lab", device_id=17)
+        try:
+            await transport.connect(endpoint)
+            first = await transport.execute(CommandRequest(target=target, command="display first"))
+            second = await transport.execute(CommandRequest(target=target, command="display second"))
+
+            assert "result contains <fake>" in first.raw_output
+            assert "result contains [fake]" in first.raw_output
+            assert "FIRST COMPLETE" in first.raw_output
+            assert "SECOND COMPLETE" not in first.raw_output
+            assert "SECOND COMPLETE" in second.raw_output
+            assert "FIRST COMPLETE" not in second.raw_output
+            assert first.prompt_detected == "<H3C>"
+            assert second.prompt_detected == "<H3C>"
+        finally:
+            await transport.close()
+            server.close()
+            await server.wait_closed()
 
     async def test_execute_unknown_command(self, transport, endpoint, server):
         await transport.connect(endpoint)
@@ -388,11 +710,21 @@ class TestConsoleTelnetTransport:
     # ---- Timeout Tests ----
 
     async def test_connect_prompt_timeout(self, transport):
-        """If the server sends nothing, prompt detection should time out."""
+        """Prompt failure closes the socket and permits a clean reconnect."""
 
-        # Start a server that sends no prompt
+        connection_count = 0
+
         async def _blackhole(reader, writer):
-            await asyncio.sleep(60)  # never send anything
+            nonlocal connection_count
+            connection_count += 1
+            if connection_count == 1:
+                writer.write(b"password cipher supersecret\r\n")
+            else:
+                writer.write(b"<H3C>\r\n")
+            await writer.drain()
+            await reader.read()
+            writer.close()
+            await writer.wait_closed()
 
         srv = await asyncio.start_server(_blackhole, host="127.0.0.1", port=0)
         try:
@@ -406,13 +738,22 @@ class TestConsoleTelnetTransport:
             )
 
             transport = ConsoleTelnetTransport(
-                session=DeviceSession(device_id=99, device_name="timeout-device")
+                session=DeviceSession(device_id=99, device_name="timeout-device"),
+                prompt_timeout_seconds=0.1,
             )
             with pytest.raises(DomainError) as exc:
                 await transport.connect(ep)
-            # Either CONNECTION_FAILED (timeout on TCP connect with low confidence)
-            # or PROMPT_TIMEOUT
-            assert exc.value.code in (ErrorCode.CONNECTION_FAILED, ErrorCode.PROMPT_TIMEOUT)
+            assert exc.value.code == ErrorCode.PROMPT_TIMEOUT
+            assert "buffer_tail" not in (exc.value.details or {})
+            assert transport._connected is False
+            assert transport._reader is None
+            assert transport._writer is None
+            assert transport._session.state == SessionState.DISCONNECTED
+
+            await transport.connect(ep)
+            assert transport._connected is True
+            assert transport._current_prompt == "<H3C>"
+            await transport.close()
         finally:
             srv.close()
             await srv.wait_closed()
@@ -469,12 +810,68 @@ class TestConsoleTelnetTransport:
                 command="display clock",
                 command_type=CommandType.DISPLAY,
             )
-            # This may return empty or raise — both are acceptable for a server disconnect
-            await transport.execute(request2)
-            # Session should detect it's no longer connected
-            await transport.close()
+            with pytest.raises(DomainError) as exc:
+                await transport.execute(request2)
+            assert exc.value.code == ErrorCode.CONNECTION_CLOSED
+            assert transport._connected is False
         finally:
             await srv.stop()
+
+    async def test_command_timeout_discards_late_output_before_reconnect(self):
+        connection_count = 0
+
+        async def _delayed_server(reader, writer):
+            nonlocal connection_count
+            connection_count += 1
+            current = connection_count
+            writer.write(b"<H3C>\r\n")
+            await writer.drain()
+            await reader.readline()
+            if current == 1:
+                await asyncio.sleep(1.2)
+                response = b"LATE FIRST RESPONSE\r\n<H3C>\r\n"
+            else:
+                response = b"SECOND RESPONSE\r\n<H3C>\r\n"
+            try:
+                writer.write(response)
+                await writer.drain()
+                await reader.read()
+            except (ConnectionError, BrokenPipeError):
+                pass
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(_delayed_server, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        endpoint = RuntimeEndpoint(
+            transport=TransportType.CONSOLE_TELNET,
+            host="127.0.0.1",
+            port=port,
+            source=DiscoverySource.MANUAL,
+            confidence=1.0,
+        )
+        transport = ConsoleTelnetTransport(DeviceSession(device_id=7, device_name="timeout"))
+        request = CommandRequest(
+            target=CommandTarget(project_id="lab", device_id=7),
+            command="display version",
+            timeout_seconds=1.0,
+        )
+        try:
+            await transport.connect(endpoint)
+            with pytest.raises(DomainError) as exc:
+                await transport.execute(request)
+            assert exc.value.code == ErrorCode.COMMAND_TIMEOUT
+            assert transport._connected is False
+
+            await transport.connect(endpoint)
+            result = await transport.execute(request)
+            assert "SECOND RESPONSE" in result.raw_output
+            assert "LATE FIRST RESPONSE" not in result.raw_output
+            await transport.close()
+        finally:
+            server.close()
+            await server.wait_closed()
 
 
 class TestFakeTelnetServer:
@@ -494,6 +891,7 @@ class TestFakeTelnetServer:
             assert b"<H3C>" in data
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_echoes_command(self, server):
         reader, writer = await asyncio.open_connection("127.0.0.1", server.actual_port)
@@ -505,6 +903,7 @@ class TestFakeTelnetServer:
             assert b"display version" in data
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_registered_command_response(self, server):
         server.register_command("display version", "H3C Comware Software, Version 7.1.070")
@@ -518,6 +917,7 @@ class TestFakeTelnetServer:
             assert b"<H3C>" in data  # trailing prompt
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_unknown_command(self, server):
         reader, writer = await asyncio.open_connection("127.0.0.1", server.actual_port)
@@ -529,6 +929,7 @@ class TestFakeTelnetServer:
             assert b"Unknown command" in data
         finally:
             writer.close()
+            await writer.wait_closed()
 
     async def test_pagination(self, server):
         pages = [
@@ -548,3 +949,4 @@ class TestFakeTelnetServer:
             assert b"line 3" in data
         finally:
             writer.close()
+            await writer.wait_closed()

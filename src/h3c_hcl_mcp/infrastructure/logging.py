@@ -7,8 +7,36 @@ Never use print() or stdout logging in production code.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import sys
 from typing import Any
+
+from h3c_hcl_mcp.infrastructure.audit.redact import redact_sensitive
+
+_MAX_LOG_ARGUMENT_CHARS = 1024
+_MAX_LOG_EXCEPTION_CHARS = 1024
+_LOCAL_PATH_MARKER = "<local-path>"
+_QUOTED_ABSOLUTE_PATH_RE = re.compile(
+    r"""(["'])(?:[A-Za-z]:[\\/]|\\\\|/).*?\1""",
+    re.IGNORECASE,
+)
+_FILE_URI_PATH_RE = re.compile(
+    r"""(?<![A-Za-z0-9_])file://[^\s"'<>|]+""",
+    re.IGNORECASE,
+)
+_FORWARD_UNC_PATH_RE = re.compile(
+    r"""(?<![A-Za-z0-9_:/])//[^/\s"'<>|]+/[^\s"'<>|]+""",
+)
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\)[^\r\n\t]*?"
+    r"(?=(?:;\s*|,\s+|\s+[A-Za-z_][A-Za-z0-9_.-]*=|$))",
+    re.IGNORECASE,
+)
+_POSIX_ABSOLUTE_PATH_RE = re.compile(
+    r"""(?<![A-Za-z0-9_/])/(?!/)[^\s"'<>|]+""",
+)
+_LOG_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
 def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
@@ -30,12 +58,13 @@ def setup_logging(level: str = "INFO", *, format_json: bool = False) -> None:
     root.handlers.clear()
 
     handler = logging.StreamHandler(sys.stderr)
+    handler.addFilter(_BoundedLogArgumentsFilter())
 
     formatter: logging.Formatter
     if format_json:
         formatter = _JSONFormatter()
     else:
-        formatter = logging.Formatter(
+        formatter = _BoundedExceptionFormatter(
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
@@ -79,8 +108,73 @@ class _JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         if record.exc_info and record.exc_info[1]:
-            log_entry["exception"] = str(record.exc_info[1])
+            log_entry["exception"] = _bounded_exception_text(str(record.exc_info[1]))
         return json.dumps(log_entry, ensure_ascii=False)
+
+
+class _BoundedExceptionFormatter(logging.Formatter):
+    """Redact and bound human-readable exception tracebacks."""
+
+    def formatException(self, exc_info: Any) -> str:  # noqa: N802
+        return _bounded_exception_text(super().formatException(exc_info))
+
+
+class _BoundedLogArgumentsFilter(logging.Filter):
+    """Bound client-controlled string arguments before formatter expansion."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _sanitize_log_text(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_bounded_log_argument(value) for value in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {key: _bounded_log_argument(value) for key, value in record.args.items()}
+        return True
+
+
+def _bounded_log_argument(value: object) -> object:
+    if isinstance(value, os.PathLike):
+        return _LOCAL_PATH_MARKER
+    if isinstance(value, BaseException):
+        return type(value).__name__
+    if not isinstance(value, str):
+        return value
+    redacted = _sanitize_log_text(value)
+    if len(redacted) <= _MAX_LOG_ARGUMENT_CHARS:
+        return redacted
+    return redacted[: _MAX_LOG_ARGUMENT_CHARS - 1] + "…"
+
+
+def _bounded_exception_text(value: str) -> str:
+    redacted = _sanitize_log_text(value)
+    if len(redacted) <= _MAX_LOG_EXCEPTION_CHARS:
+        return redacted
+    return redacted[: _MAX_LOG_EXCEPTION_CHARS - 1] + "…"
+
+
+def _sanitize_log_text(value: str) -> str:
+    """Remove credentials, host paths, and log-forging controls."""
+
+    redacted = redact_sensitive(value)
+    redacted = _QUOTED_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    redacted = _FILE_URI_PATH_RE.sub(f"file://{_LOCAL_PATH_MARKER}", redacted)
+    redacted = _FORWARD_UNC_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    redacted = _WINDOWS_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    redacted = _POSIX_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_MARKER, redacted)
+    return _LOG_CONTROL_RE.sub(_escape_log_control, redacted)
+
+
+def _escape_log_control(match: re.Match[str]) -> str:
+    """Render line-breaking and terminal control characters visibly."""
+
+    value = match.group(0)
+    named = {"\r": r"\r", "\n": r"\n", "\t": r"\t"}
+    if value in named:
+        return named[value]
+    codepoint = ord(value)
+    if codepoint <= 0xFF:
+        return f"\\x{codepoint:02x}"
+    return f"\\u{codepoint:04x}"
 
 
 def get_logger(name: str) -> logging.Logger:

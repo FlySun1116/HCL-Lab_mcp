@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from h3c_hcl_mcp.adapters.hcl.net_parser import (
+    MAX_NET_FILE_BYTES,
     NetDeviceEntry,
     NetLinkEntry,
     _validate_path,
@@ -39,6 +40,13 @@ class TestValidatePath:
         with pytest.raises(DomainError) as exc:
             _validate_path("project/../../etc/test.net")
         assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    def test_traversal_error_does_not_expose_absolute_root(self, tmp_path: Path):
+        unsafe = str(tmp_path / "safe" / ".." / "outside.net")
+        with pytest.raises(DomainError) as exc:
+            _validate_path(unsafe)
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(tmp_path) not in str(exc.value)
 
 
 class TestParseNetFile:
@@ -89,6 +97,18 @@ class TestParseNetFile:
         with pytest.raises(DomainError) as exc:
             parse_net_file(net_path)
         assert exc.value.code == ErrorCode.PROJECT_DAMAGED
+
+    def test_oversized_net_file_is_rejected_before_parsing(self, tmp_path: Path):
+        net_path = tmp_path / "oversized.net"
+        with net_path.open("wb") as file:
+            file.truncate(MAX_NET_FILE_BYTES + 1)
+
+        with pytest.raises(DomainError) as exc:
+            parse_net_file(str(net_path))
+
+        assert exc.value.code == ErrorCode.PROJECT_DAMAGED
+        assert exc.value.details == {"file": "oversized.net", "max_bytes": MAX_NET_FILE_BYTES}
+        assert str(tmp_path) not in str(exc.value)
 
 
 class TestParseNetTopology:

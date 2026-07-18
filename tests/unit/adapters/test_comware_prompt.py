@@ -70,6 +70,24 @@ class TestDetectPrompt:
         buf = "<H3C>\r\n[H3C]\r\n[H3C-GigabitEthernet1/0/1]"
         assert detect_prompt(buf) == "[H3C-GigabitEthernet1/0/1]"
 
+    def test_embedded_user_view_text_is_not_prompt(self):
+        assert detect_prompt("operation result: <fake>\r\n") is None
+
+    def test_embedded_system_view_text_is_not_prompt(self):
+        assert detect_prompt("operation result: [fake]\r\n") is None
+
+    def test_prompt_must_be_final_line(self):
+        assert detect_prompt("<fake>\r\nadditional output") is None
+
+    def test_expected_prompt_rejects_other_sysname(self):
+        assert detect_prompt("\r\n<fake>", expected_prompt="<H3C>") is None
+
+    def test_expected_prompt_rejects_mode_transition(self):
+        assert detect_prompt("\r\n[H3C-interface]", expected_prompt="<H3C>") is None
+
+    def test_expected_prompt_accepts_exact_session_prompt(self):
+        assert detect_prompt("\r\n[H3C-interface]", expected_prompt="[H3C-interface]") == "[H3C-interface]"
+
 
 class TestNormalizePrompt:
     """Prompt normalization."""

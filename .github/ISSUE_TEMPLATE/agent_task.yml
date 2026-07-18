@@ -1,0 +1,69 @@
+name: Agent implementation task
+description: Define a bounded task that a Claude/Codex Agent Team member can implement and hand off safely.
+title: "task: "
+labels: ["agent-ready", "needs-triage"]
+body:
+  - type: input
+    id: task_id
+    attributes:
+      label: Task ID
+      placeholder: T10 / BUG-031 / issue number
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective and user-visible outcome
+    validations:
+      required: true
+  - type: textarea
+    id: owned_files
+    attributes:
+      label: Owned files or module boundary
+      description: List the only files/directories the teammate may edit.
+      placeholder: src/h3c_hcl_mcp/adapters/hcl/** and matching tests
+    validations:
+      required: true
+  - type: textarea
+    id: forbidden
+    attributes:
+      label: Forbidden files and actions
+      description: Include shared files, public contracts, Git/release actions, real writes, and proprietary/secret boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and handoff target
+      description: State upstream tasks, shared contracts, and the Team Lead/reviewer receiving the result.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance tests and evidence
+      description: List exact tests, static checks, protocol scenarios, fixtures, and expected results.
+    validations:
+      required: true
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Definition of Ready
+      options:
+        - label: Scope maps to the approved design/roadmap and has no unresolved product-direction choice.
+          required: true
+        - label: Public Tool/Port/error/security changes have an approved ADR or are explicitly out of scope.
+          required: true
+        - label: Fixtures are synthetic and no credentials, real topology/config, raw HCL logs, binaries, images, or vendor documents are required.
+          required: true
+        - label: The task can be completed without editing another Agent's owned files.
+          required: true
+  - type: checkboxes
+    id: done
+    attributes:
+      label: Definition of Done
+      options:
+        - label: Implementation, focused tests, full regression, strict typing, formatting, and relevant Windows integration checks pass.
+        - label: Documentation/CHANGELOG/HANDOVER are updated when behavior changes.
+        - label: Diff contains no secret, proprietary asset, unrelated refactor, weakened assertion, or relaxed safety policy.
+        - label: Handoff lists changed files, exact commands/results, assumptions, risks, and unverified external checks.

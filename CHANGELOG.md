@@ -5,6 +5,98 @@ All notable changes to h3c-hcl-mcp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.2] — Unreleased
+
+### Added
+
+- Added HCL 5.10.x ConfigObj-style `.net` fixtures and parser coverage for nested device/link sections.
+- Added chronological HCL log reduction for project binding, console creation, console closure, and topology-alias rebinding.
+- Added bounded loopback Telnet/Comware prompt verification before a console endpoint can be reported as usable.
+- Added `ProjectAwareRuntimeDiscovery` so project topology is registered before both project-wide and single-device discovery.
+- Added official MCP `ClientSession` stdio subprocess tests for no-config startup, `initialize`, `tools/list`, `tools/call`, validation, configuration sources, and pre-protocol configuration failures.
+- Added Python 3.12 clean-artifact stdio tests through `H3C_HCL_MCP_TEST_EXECUTABLE`; the
+  installed console entry point is exercised outside the source tree for both wheel and sdist.
+- Added structured Comware ping and traceroute parsers with strict destination/count/hop schemas.
+- Added a final `CallToolResult` UTF-8 byte budget and stable `OUTPUT_TOO_LARGE` failures across
+  success, validation, timeout, unknown-tool, and error response paths.
+- Added an explicit active-v0.1 line-coverage definition and an 85% CI gate.
+- Added structured Bug, Feature, and Agent Task Issue forms plus a release-oriented PR checklist so a new Agent Team can receive bounded ownership and verification requirements directly from GitHub.
+- Added a reusable distribution archive policy check that rejects local Agent state, credentials, proprietary binaries, links, path traversal, oversized members, and missing license/audit schema files.
+- Added a machine-checkable compatibility matrix covering real-positive metadata parsing, real-negative stopped devices, synthetic S6850/MSR parser evidence, and an explicit untested VSR entry.
+- Added reviewed Claude Agent Team role templates and an opt-in playbook with bounded ownership, human approval gates, and safe Git defaults.
+- Added documentation, repository-security, dependency/license, CodeQL, SBOM, provenance, signed-tag, Trusted Publishing, and fail-closed release workflow gates.
+
+### Fixed
+
+- Parsed real HCL 5.10.3 `projectInfo`/`deviceInfoList` fields and merged device metadata with `.net` authoritative IDs using case-insensitive names.
+- Rejected absolute, traversal, separator-bearing, and root-escaping project IDs, including resolved symlink escapes.
+- Removed formula-derived console availability and the previous "any HCL process means every device is running" false positive.
+- Kept project-wide and single-device runtime results coherent through a short shared cache; closed or rebound consoles no longer leave stale endpoints.
+- Passed verified `project_id`/`device_id` endpoint context into console sessions and isolated per-task session routing to prevent cross-device execution.
+- Used the configured connection timeout instead of endpoint confidence as the Telnet timeout.
+- Made a missing default configuration safe and optional while keeping explicitly selected missing or malformed files fail-closed.
+- Added `PyYAML` as a runtime dependency and corrected nested JSON-list environment-variable coercion.
+- Enforced v0.1 `stdio` transport, exclusive per-device concurrency, and valid unique transport preferences during configuration validation.
+- Wired `allow_display_prefixes` as a restriction-only subset of the built-in display allowlist and `deny_patterns` as additional case-insensitive literal denials; neither can bypass mandatory injection/dangerous-command checks.
+- Normalized official stdio argument validation failures to structured `INVALID_ARGUMENT` results without Pydantic input or documentation URL leakage.
+- Normalized unknown Tool calls, added correlated audit events, and enforced `server.max_tool_seconds` at the ToolManager boundary with stable `TIMEOUT` results.
+- Correlated response and audit `request_id`, preserved domain error codes, audited schema failures, and separated invocation `outcome` from `policy_result`.
+- Normalized audit timestamps to UTC for correct offset-aware filtering and migrated legacy error outcomes.
+- Honored `audit.enabled=false` without creating an audit database.
+- Removed project absolute paths and device `config_path` values from MCP responses and sanitized path-bearing or device-output-bearing domain errors at the MCP boundary.
+- Filtered HCL PC/terminal nodes from H3C device results and applied mandatory sensitive-output redaction at the MCP boundary; `redact=false` now fails with `POLICY_DENIED`.
+- Covered complete and truncated PKCS#8/RSA/EC/OpenSSH/encrypted private-key blocks and SNMPv3 credentials in mandatory redaction.
+- Closed and invalidated Telnet sessions after prompt failure, EOF, cancellation, truncation, or command timeout so late bytes cannot contaminate a later request.
+- Required Comware prompts to be independent final lines and to match the prompt captured for the read-only session, preventing prompt-like device output from truncating one command and contaminating the next.
+- Moved project scanning/topology parsing off the stdio event loop and reconciled deleted topology devices from cached runtime state.
+- Made deep health checks inspect configured projects and real runtime discovery instead of reporting an unconditional dependency result.
+- Moved process inspection and bounded log loading off the stdio event loop, closed SQLite/scandir/Telnet resources explicitly, and limited log observation to 16 files and 4 MiB per file.
+- Treated every skipped region in an oversized HCL log as a state trust boundary; endpoints now require a fresh project binding in the retained continuous tail instead of correlating console events across unread bytes.
+- Classified `ping` and `tracert` as diagnostic operations and parsed their summaries instead of returning ambiguous raw-only data.
+- Redacted SNMP communities, NTP authentication keys, RADIUS/HWTACACS shared keys, and all supported `super password` role/hash/cipher/simple forms in both full and quick paths.
+- Passed `hcl_list_projects` cursors through to the repository so pagination can advance beyond the first page.
+- Marked device-derived result content as untrusted and removed duplicate raw parser copies from structured results.
+- Redacted Comware `key-string`, WEP key, WLAN `preshared-key`, and IPsec pre-shared-key forms in both full and quick paths.
+- Made Telnet IAC filtering incremental across TCP chunks and rejected non-loopback or non-console endpoints at the transport boundary.
+- Wired global session limits, idle and command-count recycling, and server-shutdown connection cleanup to the existing policy settings.
+- Bounded every public client string field, truncated client-controlled log arguments, and marked HCL project/runtime metadata as untrusted content.
+- Made audit persistence failures fail closed with a stable `INTERNAL_ERROR`/`AUDIT_UNAVAILABLE` reason instead of returning an unaudited success.
+- Excluded `.claude`, `.codex`, `.agents`, caches, virtual environments, and build output from distributions; the source archive no longer includes local Claude settings.
+- Made the Windows registry lookup type-safe under both Windows and Linux mypy platforms.
+- Passed the repository `GITHUB_TOKEN` to gitleaks-action v3 so the pinned secret-scan job can run on pull requests.
+- Bounded `project.json` and `.net` reads, rejected unsafe referenced paths and symlink/junction escapes, and kept all resulting errors free of absolute host paths.
+- Deduplicated physical project roots and rejected case-insensitive project-ID collisions across different directories instead of silently selecting or listing the first project twice.
+- Rejected projects containing multiple direct-child `.net` files instead of using nondeterministic directory enumeration to choose potentially stale device IDs and links.
+- Replaced archive extension denylists with explicit wheel/sdist member allowlists and added a tracked-repository policy for secrets, proprietary assets, links, case collisions, and oversized files.
+- Restricted v0.1 transport configuration to exactly `console_telnet`; SSH remains a v0.2 capability rather than an accepted but unusable setting.
+- Enforced `audit.retention_days` in SQLite initialization/appends and bounded/redacted human and JSON exception logging.
+- Replaced FastMCP ToolManager mutation with public registration/call/list extension points; the sole private server-version bridge is isolated behind an MCP 1.28.x compatibility guard.
+- Removed absolute audit/secret/project paths and raw exception text from production log arguments; human and JSON logging now redact Windows, UNC, generic POSIX paths, credentials, and bounded tracebacks while preserving HTTPS URLs.
+- Closed compact `label:/absolute/path` redaction gaps and escaped CR/LF, terminal controls, and Unicode line separators before formatting human or JSON logs.
+
+### Changed
+
+- Version metadata now identifies the candidate as `0.1.0-beta.2`.
+- The v0.1 public surface remains 15 namespaced tools. Proposed short aliases are not registered; `h3c_diff_config` remains an explicit `NOT_IMPLEMENTED` placeholder.
+- Client configuration examples now launch a source-installed local virtual-environment executable. The package has not yet been published to PyPI, so `uvx h3c-hcl-mcp` is not a supported installation path for this candidate.
+- Upgraded checkout, setup-uv, upload-artifact, and gitleaks Actions to current Node 24 releases and pinned every third-party Action to a reviewed full commit SHA.
+- CI now treats `ResourceWarning` and `PytestUnraisableExceptionWarning` as errors and installs wheel/sdist dependencies only from each artifact's package metadata in clean Python 3.12 environments.
+- The MCP runtime dependency is constrained to the verified `mcp>=1.28.1,<1.29` line until the compatibility bridge is revalidated.
+
+### Verification status
+
+- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **767 passed, 3 skipped in 60.81s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **87.56%** (3,931 statements, 489 missed), above the 85% hard gate.
+- [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) remains the integration target. Latest CI, documentation, artifact security, license, secret-scan, and CodeQL checks pass; only Dependency Review fails because the repository Dependency Graph setting is disabled. The repository also has no protection rule on `main`, so successful checks are not yet enforced as required checks.
+- `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
+- Distribution policy passes with 77 wheel members and 174 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members. Final tag checksums are generated as external release assets instead of being embedded into the self-referential source archive.
+- Locked dependency consistency, runtime vulnerability audit, incompatible-license gate, documentation/examples validation, and SBOM generation all pass locally.
+- The installed-artifact test asserts the exact 15-Tool set, minimally invokes every public Tool, and performs a non-empty filtered audit query.
+- Claude Code 2.1.211 reports the stdio Server as connected from an isolated temporary profile; Claude Desktop and Cursor UI smoke tests remain external release checks.
+- Synthetic parser, fake console, MCP protocol, validation, audit, configuration, redaction, timeout, and concurrency paths are automated.
+- A local HCL 5.10.3 project was parsed read-only, but the target project/devices were not running during the latest runtime check. Successful real-device `display version` and `display ip interface brief` remain release-candidate exit checks.
+- No tag, GitHub Release, or PyPI publication has been created for this candidate.
+
 ## [0.1.0-beta.1] — 2026-07-15
 
 ### Fixed — Bugfix from TEST_REPORT_v0.1.md

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
 from h3c_hcl_mcp.adapters.hcl.project_repository import (
+    MAX_PROJECT_JSON_BYTES,
     HCLProjectRepository,
     _find_net_file,
     _get_file_mtime,
     _read_project_json,
+    _resolve_project_dir,
+    _validate_project_id,
     _validate_project_path,
 )
 from h3c_hcl_mcp.domain.errors import DomainError, ErrorCode
@@ -28,6 +32,30 @@ class TestValidateProjectPath:
         with pytest.raises(DomainError) as exc:
             _validate_project_path("../etc")
         assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    def test_traversal_error_does_not_expose_absolute_root(self, tmp_path: Path):
+        unsafe = str(tmp_path / "safe" / ".." / "outside")
+        with pytest.raises(DomainError) as exc:
+            _validate_project_path(unsafe)
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(tmp_path) not in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "project_id",
+        ["", ".", "..", "../outside", r"..\outside", "/absolute", r"C:\absolute"],
+    )
+    def test_project_identifier_paths_are_rejected(self, project_id: str):
+        with pytest.raises(DomainError) as exc:
+            _validate_project_id(project_id)
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    def test_project_directory_resolves_inside_root(self, tmp_path: Path):
+        project_dir = tmp_path / "hcl_safe"
+        project_dir.mkdir()
+
+        resolved = _resolve_project_dir(str(tmp_path), "hcl_safe")
+
+        assert Path(resolved) == project_dir
 
 
 class TestReadProjectJson:
@@ -50,6 +78,118 @@ class TestReadProjectJson:
             _read_project_json(str(tmp_path))
         assert exc.value.code == ErrorCode.PROJECT_NOT_FOUND
 
+    def test_oversized_project_json_is_rejected_before_parsing(self, tmp_path: Path):
+        project_dir = tmp_path / "oversized_project"
+        project_dir.mkdir()
+        json_path = project_dir / "project.json"
+        with json_path.open("wb") as file:
+            file.truncate(MAX_PROJECT_JSON_BYTES + 1)
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_DAMAGED
+        assert exc.value.details == {"file": "project.json", "max_bytes": MAX_PROJECT_JSON_BYTES}
+        assert str(tmp_path) not in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "config_path",
+        [
+            "../outside.cfg",
+            r"..\outside.cfg",
+            "/outside.cfg",
+            r"C:\outside.cfg",
+            r"\\server\share\outside.cfg",
+            r"DeviceConfig\..\outside.cfg",
+            "DeviceConfig/../../outside.cfg",
+        ],
+    )
+    def test_config_snapshot_escape_is_rejected(self, tmp_path: Path, config_path: str):
+        project_dir = tmp_path / "unsafe_config_project"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": project_dir.name,
+                    "name": "Unsafe Config",
+                    "devices": [{"id": 1, "name": "S1", "configPath": config_path}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(tmp_path) not in str(exc.value)
+        assert exc.value.details == {"file": "config snapshot"}
+
+    def test_absolute_native_config_snapshot_is_rejected(self, tmp_path: Path):
+        project_dir = tmp_path / "absolute_config_project"
+        project_dir.mkdir()
+        outside = tmp_path / "outside.cfg"
+        (project_dir / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": project_dir.name,
+                    "name": "Absolute Config",
+                    "devices": [{"id": 1, "name": "S1", "configPath": str(outside.resolve())}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(exc.value)
+
+    def test_config_snapshot_symlink_escape_is_rejected_when_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "linked_config_project"
+        config_dir = project_dir / "DeviceConfig"
+        config_dir.mkdir(parents=True)
+        outside = tmp_path / "outside.cfg"
+        outside.write_text("sysname outside", encoding="utf-8")
+        link = config_dir / "S1.cfg"
+        try:
+            link.symlink_to(outside)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks are unavailable: {exc}")
+        (project_dir / "project.json").write_text(
+            json.dumps(
+                {
+                    "id": project_dir.name,
+                    "name": "Linked Config",
+                    "devices": [{"id": 1, "name": "S1", "configPath": "DeviceConfig/S1.cfg"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(DomainError) as exc:
+            _read_project_json(str(project_dir))
+
+        assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(exc.value)
+
+    def test_project_json_symlink_escape_is_rejected_when_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "linked_json_project"
+        project_dir.mkdir()
+        outside = tmp_path / "outside.json"
+        outside.write_text('{"id": "linked_json_project"}', encoding="utf-8")
+        try:
+            (project_dir / "project.json").symlink_to(outside)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks are unavailable: {exc}")
+
+        with pytest.raises(DomainError) as caught:
+            _read_project_json(str(project_dir))
+
+        assert caught.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(caught.value)
+
 
 class TestFindNetFile:
     """Test finding .net topology files."""
@@ -63,10 +203,49 @@ class TestFindNetFile:
         result = _find_net_file(str(empty_lab_dir))
         assert result is None
 
+    def test_uppercase_net_extension_is_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "uppercase_net"
+        project_dir.mkdir()
+        topology = project_dir / "topology.NET"
+        topology.write_text("version = 5.10.3", encoding="utf-8")
+
+        assert _find_net_file(str(project_dir)) == str(topology)
+
+    def test_multiple_net_files_fail_closed_without_exposing_names(self, tmp_path: Path):
+        project_dir = tmp_path / "ambiguous_net"
+        project_dir.mkdir()
+        (project_dir / "stale.net").write_text("version = 5.10.2", encoding="utf-8")
+        (project_dir / "current.net").write_text("version = 5.10.3", encoding="utf-8")
+
+        with pytest.raises(DomainError) as caught:
+            _find_net_file(str(project_dir))
+
+        assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+        assert caught.value.details == {"file": ".net topology", "candidate_count": 2}
+        assert str(tmp_path) not in str(caught.value)
+        assert "stale.net" not in str(caught.value)
+        assert "current.net" not in str(caught.value)
+
     def test_traversal_rejected(self):
         with pytest.raises(DomainError) as exc:
             _find_net_file("../etc")
         assert exc.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+
+    def test_net_symlink_escape_is_rejected_when_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "linked_net_project"
+        project_dir.mkdir()
+        outside = tmp_path / "outside.net"
+        outside.write_text("version = 5.10.3", encoding="utf-8")
+        try:
+            (project_dir / "linked.net").symlink_to(outside)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks are unavailable: {exc}")
+
+        with pytest.raises(DomainError) as caught:
+            _find_net_file(str(project_dir))
+
+        assert caught.value.code == ErrorCode.PROJECT_PATH_TRAVERSAL
+        assert str(outside) not in str(caught.value)
 
 
 class TestGetFileMtime:
@@ -211,6 +390,149 @@ class TestHCLProjectRepository:
         assert len(repo.projects_dirs) == before
 
     @pytest.mark.asyncio
+    async def test_constructor_deduplicates_physical_project_roots(self, tmp_path: Path):
+        project_dir = tmp_path / "unique_lab"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps({"id": "unique_lab", "name": "Unique", "version": "5.10.3", "devices": []}),
+            encoding="utf-8",
+        )
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path), str(tmp_path)])
+
+        projects, cursor = await repo.list_projects()
+
+        assert repo.projects_dirs == [str(tmp_path)]
+        assert [project.project_id for project in projects] == ["unique_lab"]
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_duplicate_project_id_across_roots_fails_closed(self, tmp_path: Path):
+        roots = [tmp_path / "root_a", tmp_path / "root_b"]
+        for index, root in enumerate(roots, start=1):
+            project_dir = root / "shared_lab"
+            project_dir.mkdir(parents=True)
+            (project_dir / "project.json").write_text(
+                json.dumps(
+                    {
+                        "id": "shared_lab",
+                        "name": f"Conflicting Lab {index}",
+                        "version": "5.10.3",
+                        "devices": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(root) for root in roots])
+
+        projects, cursor = await repo.list_projects()
+
+        assert projects == []
+        assert cursor is None
+        for lookup in (repo.get_project, repo.get_topology):
+            with pytest.raises(DomainError) as caught:
+                await lookup("shared_lab")
+            assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+            assert caught.value.details == {"project_id": "shared_lab", "candidate_count": 2}
+            assert str(tmp_path) not in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_project_id_collision_fails_closed(self, tmp_path: Path):
+        roots = [tmp_path / "root_a", tmp_path / "root_b"]
+        project_ids = ["CaseLab", "caselab"]
+        for root, project_id in zip(roots, project_ids, strict=True):
+            project_dir = root / project_id
+            project_dir.mkdir(parents=True)
+            (project_dir / "project.json").write_text(
+                json.dumps({"id": project_id, "name": project_id, "version": "5.10.3", "devices": []}),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(root) for root in roots])
+
+        projects, _ = await repo.list_projects()
+
+        assert projects == []
+        with pytest.raises(DomainError) as caught:
+            await repo.get_project("CaseLab")
+        assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+
+    @pytest.mark.asyncio
+    async def test_unicode_ids_not_merged_beyond_windows_case_rules(self, tmp_path: Path):
+        roots = [tmp_path / "root_a", tmp_path / "root_b"]
+        project_ids = ["Straße", "STRASSE"]
+        for root, project_id in zip(roots, project_ids, strict=True):
+            project_dir = root / project_id
+            project_dir.mkdir(parents=True)
+            (project_dir / "project.json").write_text(
+                json.dumps({"id": project_id, "name": project_id, "version": "5.10.3", "devices": []}),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(root) for root in roots])
+
+        projects, _ = await repo.list_projects()
+
+        assert {project.project_id for project in projects} == set(project_ids)
+        for project_id in project_ids:
+            assert (await repo.get_project(project_id)).project_id == project_id
+
+    @pytest.mark.asyncio
+    async def test_duplicate_root_pagination_never_repeats_projects(self, tmp_path: Path):
+        for project_id in ("lab_a", "lab_b"):
+            project_dir = tmp_path / project_id
+            project_dir.mkdir()
+            (project_dir / "project.json").write_text(
+                json.dumps({"id": project_id, "name": project_id, "version": "5.10.3", "devices": []}),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path), str(tmp_path)])
+
+        first, cursor = await repo.list_projects(limit=1)
+        second, final_cursor = await repo.list_projects(limit=1, cursor=cursor)
+
+        assert cursor == "1"
+        assert final_cursor is None
+        assert first[0].project_id != second[0].project_id
+
+    @pytest.mark.asyncio
+    async def test_all_project_reads_reject_multiple_net_files(self, tmp_path: Path):
+        project_dir = tmp_path / "multi_net_lab"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps({"id": "multi_net_lab", "name": "Multi Net", "version": "5.10.3", "devices": []}),
+            encoding="utf-8",
+        )
+        (project_dir / "old.net").write_text("version = 5.10.2", encoding="utf-8")
+        (project_dir / "new.net").write_text("version = 5.10.3", encoding="utf-8")
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path)])
+
+        projects, cursor = await repo.list_projects()
+
+        assert projects == []
+        assert cursor is None
+        for lookup in (repo.get_project, repo.get_topology):
+            with pytest.raises(DomainError) as caught:
+                await lookup("multi_net_lab")
+            assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+            assert caught.value.details == {"file": ".net topology", "candidate_count": 2}
+
+    @pytest.mark.asyncio
+    async def test_get_project_version_fallback_rejects_multiple_net_files(self, tmp_path: Path):
+        project_dir = tmp_path / "multi_net_version_lab"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps({"id": project_dir.name, "name": "Multi Net Version", "devices": []}),
+            encoding="utf-8",
+        )
+        (project_dir / "old.net").write_text("version = 5.10.2", encoding="utf-8")
+        (project_dir / "new.net").write_text("version = 5.10.3", encoding="utf-8")
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path)])
+
+        with pytest.raises(DomainError) as caught:
+            await repo.get_project(project_dir.name)
+
+        assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+        assert caught.value.details == {"file": ".net topology", "candidate_count": 2}
+
+    @pytest.mark.asyncio
     async def test_add_projects_dir_traversal_rejected(self, repo: HCLProjectRepository):
         with pytest.raises(DomainError) as exc:
             repo.add_projects_dir("../etc")
@@ -265,10 +587,11 @@ class TestHCLRealFormat5103:
             if p.project_id == "hcl_real_5103":
                 real_project = p
                 break
-        assert real_project is not None, "hcl_real_5103 project not found"
+        assert real_project is not None, "hcl_real_5103 project not found in list"
         assert real_project.name == "Test Lab 5103"
-        assert real_project.hcl_version == "5.10.3"
         assert real_project.device_count == 2
+        # Real project.json has no hclVersion; it comes from the .net header.
+        assert real_project.hcl_version == "5.10.3"
 
     def test_get_topology_real_format(self, synthetic_projects_dir):
         """Topology should include devices from deviceInfoList."""
@@ -280,6 +603,10 @@ class TestHCLRealFormat5103:
         assert "S6850_1" in device_names
         assert "MSR36_1" in device_names
         assert len(topo.links) == 1
+        link = topo.links[0]
+        assert {link.local_device_id, link.remote_device_id} == {1, 2}
+        assert link.local_interface == "GE_0/1"
+        assert link.remote_interface == "GE_0/1"
 
     def test_device_fields_real_format(self, synthetic_projects_dir):
         """Device fields should be correctly mapped from real format."""
@@ -287,6 +614,29 @@ class TestHCLRealFormat5103:
         topo = asyncio.run(repo.get_topology("hcl_real_5103"))
         s6850 = topo.get_device_by_name("S6850_1")
         assert s6850 is not None
-        assert s6850.model == "S6850-56HF"
-        assert s6850.category == "switch"
-        assert s6850.comware_version == "7.1.070"
+        assert s6850.device_id == 1
+        assert s6850.model == "S6850"
+        assert s6850.category == "交换机"
+        assert s6850.comware_version == "CMW7.1.070-A7170"
+        assert s6850.config_path == "DeviceConfig\\S6850_1.cfg"
+
+    def test_project_directory_is_stable_id_when_project_info_path_is_stale(self, tmp_path: Path):
+        """Copied projects remain discoverable even with an old absolute path."""
+        project_dir = tmp_path / "hcl_copied_5103"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            """{
+              "projectInfo": {
+                "name": "Copied Lab",
+                "path": "C:\\\\old-user\\\\HCL\\\\Projects\\\\hcl_old_id"
+              },
+              "deviceInfoList": []
+            }""",
+            encoding="utf-8",
+        )
+
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path)])
+        project = asyncio.run(repo.get_project("hcl_copied_5103"))
+
+        assert project.project_id == "hcl_copied_5103"
+        assert project.name == "Copied Lab"

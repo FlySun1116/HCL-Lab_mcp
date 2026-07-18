@@ -88,7 +88,12 @@ class PolicyEngineImpl(PolicyEngine):
         Raises:
             DomainError(COMMAND_NOT_ALLOWED): command rejected by policy.
         """
-        is_valid, reason = validate_command(request.command, request.command_type)
+        is_valid, reason = validate_command(
+            request.command,
+            request.command_type,
+            allowed_display_prefixes=self._settings.allow_display_prefixes,
+            denied_patterns=self._settings.deny_patterns,
+        )
         if not is_valid:
             raise DomainError(
                 ErrorCode.COMMAND_NOT_ALLOWED,

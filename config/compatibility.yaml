@@ -1,0 +1,106 @@
+schema_version: 1
+entries:
+  - id: hcl-5103-s6850-project-parsing
+    hcl_version: "5.10.3"
+    device_family: "H3C S-series project metadata"
+    models:
+      - S6850
+    capability: project-topology-parsing
+    transport: filesystem
+    status: real-pass
+    evidence:
+      repository_paths:
+        - docs/TEST_REPORT_v0.1.md
+        - docs/HANDOVER.md
+      external: >-
+        A local, redacted HCL 5.10.3 user project was discovered through the
+        official MCP ClientSession path; projectInfo/deviceInfoList, six devices,
+        five links, and two S6850 H3C candidates were observed.
+    limitations:
+      - This proves read-only project metadata parsing, not a live console command path.
+      - The real project name, local path, configuration, and raw logs are intentionally not recorded.
+
+  - id: hcl-5103-s6850-runtime-not-running
+    hcl_version: "5.10.3"
+    device_family: "H3C S-series"
+    models:
+      - S6850
+    capability: runtime-discovery-and-command-precondition
+    transport: console_telnet
+    status: real-negative
+    evidence:
+      repository_paths:
+        - docs/TEST_REPORT_v0.1.md
+        - docs/HANDOVER.md
+      external: >-
+        In the local HCL 5.10.3 observation the project contained no running
+        device or verified endpoint; display version and display ip interface
+        brief both returned DEVICE_NOT_RUNNING through ClientSession.
+    limitations:
+      - No real S6850 prompt, command output, pagination, or successful command execution was observed.
+      - This negative result must not be promoted to real-pass when computing release readiness.
+
+  - id: hcl-5103-s6850-display-parser
+    hcl_version: "5.10.3"
+    device_family: "H3C S-series"
+    models:
+      - S6850
+    capability: display-version-parsing
+    transport: synthetic-output
+    status: synthetic-pass
+    evidence:
+      repository_paths:
+        - tests/unit/adapters/test_comware_parsers.py
+        - tests/fixtures/device_outputs/display_version_s6850.txt
+      external: null
+    limitations:
+      - Evidence is project-authored synthetic output and does not prove behavior on a running HCL device.
+
+  - id: hcl-5103-msr36-display-parser
+    hcl_version: "5.10.3"
+    device_family: "H3C MSR router"
+    models:
+      - MSR36-20
+    capability: display-version-parsing
+    transport: synthetic-output
+    status: synthetic-pass
+    evidence:
+      repository_paths:
+        - tests/unit/adapters/test_comware_parsers.py
+        - tests/fixtures/device_outputs/display_version_msr36.txt
+      external: null
+    limitations:
+      - Evidence is project-authored synthetic output and does not prove a real HCL MSR console session.
+
+  - id: hcl-5103-s6850-fake-console
+    hcl_version: "5.10.3"
+    device_family: "H3C S-series compatible prompt"
+    models:
+      - S6850
+    capability: read-only-console-session
+    transport: fake-console-telnet
+    status: synthetic-pass
+    evidence:
+      repository_paths:
+        - tests/unit/adapters/test_comware_telnet.py
+      external: null
+    limitations:
+      - The TCP peer is a project-authored fake Comware server, not HCL or a physical H3C device.
+      - Runtime log binding and real HCL endpoint discovery are outside this evidence item.
+
+  - id: hcl-5103-vsr-read-only-console
+    hcl_version: "5.10.3"
+    device_family: "H3C VSR"
+    models:
+      - VSR-88
+    capability: read-only-console-session
+    transport: console_telnet
+    status: not-tested
+    evidence:
+      repository_paths: []
+      external: >-
+        No repository fixture, sanitized external transcript, or real HCL VSR
+        execution record is available for this candidate.
+    limitations:
+      - Project discovery, prompt recognition, and display command execution remain unverified for VSR.
+      - A future result requires a separately authorized, read-only compatibility run.

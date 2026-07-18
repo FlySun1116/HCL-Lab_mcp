@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "h3c-hcl-mcp"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 description = "MCP Server for H3C Cloud Lab (HCL) network simulation environment"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["mcp", "hcl", "h3c", "comware", "network", "simulation"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: Microsoft :: Windows",
@@ -23,14 +23,16 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp>=1.28,<2",
+    "mcp>=1.28.1,<1.29",
     "pydantic>=2.0,<3",
+    "pyyaml>=6.0.3",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6,<8",
     "pytest-mock>=3.14",
     "ruff>=0.9",
     "mypy>=1.14",
@@ -45,6 +47,19 @@ Issues = "https://github.com/FlySun1116/HCL-Lab_mcp/issues"
 
 [project.scripts]
 h3c-hcl-mcp = "h3c_hcl_mcp.__main__:main"
+
+[tool.hatch.build]
+exclude = [
+    "/.agents",
+    "/.claude",
+    "/.codex",
+    "/.git",
+    "/.mypy_cache",
+    "/.pytest_cache",
+    "/.ruff_cache",
+    "/.venv",
+    "/dist",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/h3c_hcl_mcp"]
@@ -75,7 +90,25 @@ python_version = "3.12"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["h3c_hcl_mcp"]
+omit = [
+    "*/adapters/comware/capabilities.py",
+    "*/adapters/comware/netconf.py",
+    "*/adapters/comware/ssh.py",
+    "*/infrastructure/policy/approvals.py",
+    "*/infrastructure/secrets.py",
+    "*/mcp/tools/h3c_change.py",
+]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+
 [dependency-groups]
 dev = [
+    "pip-audit==2.10.1",
+    "pip-licenses==5.5.5",
     "types-pyyaml>=6.0.12.20260518",
 ]

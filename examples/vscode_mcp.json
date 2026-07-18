@@ -1,11 +1,11 @@
 {
-  "mcpServers": {
+  "servers": {
     "h3c-hcl": {
-      "command": "uvx",
+      "type": "stdio",
+      "command": "C:\\path\\to\\HCL-Lab_mcp\\.venv\\Scripts\\h3c-hcl-mcp.exe",
       "args": [
-        "--from",
-        "h3c-hcl-mcp==0.1.0",
-        "h3c-hcl-mcp"
+        "--projects-dir",
+        "C:\\Users\\YOUR_USERNAME\\HCL\\Projects"
       ]
     }
   }

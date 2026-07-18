@@ -4,7 +4,8 @@
     "transport": "stdio",
     "log_level": "INFO",
     "max_tool_seconds": 60,
-    "max_output_chars": 32768
+    "max_output_chars": 32768,
+    "max_tool_result_bytes": 262144
   },
   "hcl": {
     "projects_dirs": [
@@ -17,7 +18,6 @@
       "log_observation": true,
       "loopback_probe": true,
       "console_host": "127.0.0.1",
-      "fallback_telnet_base": 30000,
       "max_probe_ports": 32
     },
     "private_control_api": {
@@ -25,7 +25,7 @@
     }
   },
   "devices": {
-    "preferred_transports": ["console_telnet", "ssh"],
+    "preferred_transports": ["console_telnet"],
     "connect_timeout_seconds": 5,
     "command_timeout_seconds": 20,
     "per_device_concurrency": 1,
@@ -43,40 +43,8 @@
     "max_concurrent_sessions": 32,
     "session_timeout_seconds": 300,
     "max_commands_per_session": 100,
-    "allow_display_prefixes": [
-      "display version",
-      "display device",
-      "display interface",
-      "display ip routing-table",
-      "display lldp neighbor-information",
-      "display current-configuration",
-      "display saved-configuration",
-      "display mac-address",
-      "display arp",
-      "display vlan",
-      "display cpu-usage",
-      "display memory",
-      "display logbuffer",
-      "display clock",
-      "display users",
-      "display diagnostic-information",
-      "display interface brief",
-      "display ip interface"
-    ],
-    "deny_patterns": [
-      "reboot",
-      "reset saved-configuration",
-      "format",
-      "delete /unreserved",
-      "erase",
-      "copy",
-      "tftp",
-      "ftp",
-      "save",
-      "startup",
-      "undo",
-      "system-view"
-    ]
+    "allow_display_prefixes": [],
+    "deny_patterns": []
   },
   "audit": {
     "enabled": true,

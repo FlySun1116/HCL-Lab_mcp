@@ -1,33 +1,33 @@
-# HCL-Lab MCP Server Example Configuration
-# Copy this file to ~/.config/h3c-hcl-mcp/config.yaml and adjust for your environment.
+# HCL-Lab MCP Server Example Configuration (v0.1 beta)
+# Windows default location: %LOCALAPPDATA%\h3c-hcl-mcp\config.yaml
+# A config file is optional; copy this file only when you need explicit overrides.
 
 server:
   name: h3c-hcl-mcp
-  transport: stdio              # stdio | streamable-http (v0.5+)
+  transport: stdio              # v0.1 accepts stdio only
   log_level: INFO
   max_tool_seconds: 60
-  max_output_chars: 32768
+  max_output_chars: 32768       # Device console capture limit (characters)
+  max_tool_result_bytes: 262144 # Final MCP CallToolResult limit (UTF-8 bytes)
 
 # HCL discovery settings
 hcl:
   # install_dir: "F:\\HCL"       # Auto-discovered if omitted
   projects_dirs:
     - "${USERPROFILE}\\HCL\\Projects"
-  # logs_dir: "F:\\HCL\\Log"    # Derived from install_dir if omitted
   supported_versions: ["5.10.*"]
   runtime_discovery:
     process_inspection: true
     log_observation: true
     loopback_probe: true
     console_host: 127.0.0.1
-    fallback_telnet_base: 30000
     max_probe_ports: 32
   private_control_api:
     enabled: false               # NEVER enable — requires H3C authorization
 
 # Device transport settings
 devices:
-  preferred_transports: [console_telnet, ssh]
+  preferred_transports: [console_telnet] # SSH is reserved for v0.2
   connect_timeout_seconds: 5
   command_timeout_seconds: 20
   per_device_concurrency: 1
@@ -38,39 +38,13 @@ devices:
 
 # Security policy
 policy:
-  mode: read_only               # read_only | controlled_write | lab_admin
-  allow_display_prefixes:
-    - "display version"
-    - "display device"
-    - "display interface"
-    - "display ip routing-table"
-    - "display lldp neighbor-information"
-    - "display current-configuration"
-    - "display saved-configuration"
-    - "display mac-address"
-    - "display arp"
-    - "display vlan"
-    - "display cpu-usage"
-    - "display memory"
-    - "display logbuffer"
-    - "display clock"
-    - "display users"
-    - "display diagnostic-information"
-    - "display interface brief"
-    - "display ip interface"
-  deny_patterns:
-    - "reboot"
-    - "reset saved-configuration"
-    - "format"
-    - "delete /unreserved"
-    - "erase"
-    - "copy"
-    - "tftp"
-    - "ftp"
-    - "save"
-    - "startup"
-    - "undo"
-    - "system-view"
+  mode: read_only               # v0.1 has no configuration-write tools
+  # Empty means the built-in display allowlist. A non-empty list may only
+  # narrow that allowlist; it can never enable a command denied by the server.
+  allow_display_prefixes: []
+  # Additional case-insensitive literal substrings to deny. Built-in dangerous
+  # command and injection checks always run first and cannot be disabled.
+  deny_patterns: []
   require_approval_for_writes: true
   plan_ttl_seconds: 300
 

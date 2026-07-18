@@ -43,7 +43,7 @@ Two sets of tool names exist:
 
 ## Recommendation
 
-**Option 3 for v0.1.0-beta.1** (current state).
+**Option 3 for the v0.1 beta series** (current state).
 
 Once v0.1 tool contracts are frozen and validated with real HCL,
 revisit for v0.2 with Option 1 or Option 2 based on user feedback.

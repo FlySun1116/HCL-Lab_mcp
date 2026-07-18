@@ -19,6 +19,13 @@ venv/
 *.swo
 *~
 
+# Local agent runtime (never package or commit)
+.claude/settings.local.json
+.claude/teams/
+.claude/tasks/
+.codex/
+.agents/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -47,4 +54,5 @@ credentials.json
 # Test artifacts
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/

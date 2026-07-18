@@ -11,6 +11,7 @@ All settings are validated via Pydantic models.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import sys
@@ -18,7 +19,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Configuration directory
@@ -54,6 +55,11 @@ def _default_config_paths() -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+def _expand_path(value: str) -> str:
+    """Expand user-home and environment references in path settings."""
+    return os.path.expanduser(os.path.expandvars(value))
+
+
 class TransportMode(StrEnum):
     STDIO = "stdio"
     SSE = "sse"
@@ -76,7 +82,20 @@ class ServerSettings(BaseModel):
     log_level: str = "INFO"
     max_tool_seconds: int = Field(default=60, ge=1, le=600)
     max_output_chars: int = Field(default=32768, ge=256, le=1048576)
+    max_tool_result_bytes: int = Field(default=262144, ge=1024, le=4194304)
     config_dir: str = Field(default_factory=lambda: str(_default_config_dir()))
+
+    @field_validator("config_dir", mode="before")
+    @classmethod
+    def _expand_config_dir(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
+
+    @field_validator("transport")
+    @classmethod
+    def _require_stdio_for_v01(cls, value: TransportMode) -> TransportMode:
+        if value != TransportMode.STDIO:
+            raise ValueError("v0.1 supports only the stdio transport")
+        return value
 
 
 class PolicySettings(BaseModel):
@@ -107,6 +126,21 @@ class HCLRuntimeDiscoverySettings(BaseModel):
     fallback_telnet_base: int = Field(default=30000, ge=1024, le=65535)
     max_probe_ports: int = Field(default=32, ge=1, le=256)
 
+    @field_validator("console_host")
+    @classmethod
+    def _require_loopback_console_host(cls, value: str) -> str:
+        """Keep the v0.1 plaintext console transport on the local machine."""
+        normalized = value.strip()
+        if normalized.casefold() == "localhost":
+            return normalized
+        try:
+            is_loopback = ipaddress.ip_address(normalized).is_loopback
+        except ValueError:
+            is_loopback = False
+        if not is_loopback:
+            raise ValueError("console_host must be a loopback address in v0.1")
+        return normalized
+
 
 class PrivateControlAPISettings(BaseModel):
     """HCL private control API — disabled by default, requires H3C authorization."""
@@ -127,6 +161,18 @@ class HCLDiscoverySettings(BaseModel):
     runtime_discovery: HCLRuntimeDiscoverySettings = Field(default_factory=HCLRuntimeDiscoverySettings)
     private_control_api: PrivateControlAPISettings = Field(default_factory=PrivateControlAPISettings)
 
+    @field_validator("projects_dirs", mode="before")
+    @classmethod
+    def _expand_projects_dirs(cls, value: Any) -> Any:
+        if isinstance(value, (list, tuple)):
+            return [_expand_path(item) if isinstance(item, str) else item for item in value]
+        return value
+
+    @field_validator("install_dir", mode="before")
+    @classmethod
+    def _expand_install_dir(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
+
 
 class SSHSettings(BaseModel):
     """SSH connection settings."""
@@ -137,17 +183,36 @@ class SSHSettings(BaseModel):
     password_env: str = "H3C_HCL_MCP_SSH_PASSWORD"
     known_hosts: str = ""
 
+    @field_validator("known_hosts", mode="before")
+    @classmethod
+    def _expand_known_hosts(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
+
 
 class DeviceSettings(BaseModel):
     """Device transport and connection settings."""
 
     model_config = ConfigDict(extra="forbid")
 
-    preferred_transports: list[str] = Field(default_factory=lambda: ["console_telnet", "ssh"])
+    preferred_transports: list[str] = Field(default_factory=lambda: ["console_telnet"])
     connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
     command_timeout_seconds: int = Field(default=20, ge=1, le=300)
     per_device_concurrency: int = Field(default=1, ge=1, le=8)
     ssh: SSHSettings = Field(default_factory=SSHSettings)
+
+    @field_validator("preferred_transports")
+    @classmethod
+    def _validate_preferred_transports(cls, value: list[str]) -> list[str]:
+        if value != ["console_telnet"]:
+            raise ValueError("v0.1 requires preferred_transports=['console_telnet']")
+        return value
+
+    @field_validator("per_device_concurrency")
+    @classmethod
+    def _require_exclusive_device_session(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError("v0.1 requires per_device_concurrency=1")
+        return value
 
 
 class AuditSettings(BaseModel):
@@ -159,6 +224,11 @@ class AuditSettings(BaseModel):
     database: str = ""
     retention_days: int = Field(default=90, ge=1, le=365)
     store_raw_device_output: bool = False
+
+    @field_validator("database", mode="before")
+    @classmethod
+    def _expand_database(cls, value: Any) -> Any:
+        return _expand_path(value) if isinstance(value, str) else value
 
 
 class HCLSettings(BaseModel):
@@ -217,8 +287,17 @@ def _load_from_env() -> dict[str, Any]:
     return result
 
 
-def _coerce_value(value: str) -> int | float | bool | str:
+def _coerce_value(value: str) -> int | float | bool | str | list[Any] | dict[str, Any]:
     """Coerce string env var to the most appropriate Python type."""
+    stripped = value.strip()
+    if stripped.startswith(("[", "{")):
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(decoded, (list, dict)):
+                return decoded
     # Bool
     if value.lower() in ("true", "yes", "1"):
         return True
@@ -429,9 +508,14 @@ def load_settings(
         Fully validated HCLSettings instance.
 
     Raises:
-        SystemExit: On missing/malformed config, or unknown fields.
+        SystemExit: When an explicitly selected config file is missing,
+            a discovered config file is malformed, or fields are unknown.
     """
     # --- Layer 3: Config file ---
+    if config_path is None:
+        environment_config = os.environ.get("H3C_HCL_MCP_CONFIG", "").strip()
+        if environment_config:
+            config_path = environment_config
     config_data: dict[str, Any] | None
     if config_path is not None:
         path = Path(config_path)
@@ -445,16 +529,10 @@ def load_settings(
     else:
         config_data = _try_default_config()
         if config_data is None:
-            default_paths = _default_config_paths()
-            print(
-                "ERROR: No configuration file found.\n"
-                "Place a config.yaml or config.json in one of these locations:\n  "
-                + "\n  ".join(str(p) for p in default_paths)
-                + "\n\nOr use --config FILE to specify a path.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    assert config_data is not None  # narrowed by sys.exit above
+            # A config file is optional.  Starting from model defaults keeps a
+            # first-run stdio server safe (read-only) while still allowing
+            # environment variables and CLI options to provide all settings.
+            config_data = {}
 
     # --- Layer 2: Environment variables ---
     merged = config_data
