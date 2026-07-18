@@ -22,6 +22,8 @@
 - 支持嵌套 ConfigObj 风格 `.net`，由 `.net` 提供权威 `device_id` 和链路。
 - 按设备名称大小写不敏感合并两种来源，链路去重并输出确定性 warning。
 - 拒绝绝对路径、目录分隔符、`..`、realpath/symlink 项目根目录逃逸。
+- 配置项目根按规范化物理路径去重；跨不同物理目录的 project ID 大小写冲突以 `PROJECT_DAMAGED` fail closed，列表不再重复或静默选择首项。
+- 一个项目只接受一个直接子级 `.net`；多候选不再按不稳定目录枚举顺序选择陈旧设备 ID/链路。
 - MCP 项目列表和错误不泄漏本机绝对路径。
 
 ### Runtime 与 console
@@ -143,13 +145,13 @@ beta.2 候选修改覆盖以下边界；以最终集成 diff 为准：
 | `uv run --locked ruff check .` | 通过 | 无 lint 问题 |
 | `uv run --locked ruff format --check .` | 通过 | 110 个文件格式合格 |
 | `uv run --locked mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py` | 通过 | 73 个源/脚本文件无类型错误 |
-| 严格 warning + coverage 全量测试 | 通过 | **758 passed、3 skipped in 59.22s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过 | **87.55%**；3,904 statements / 486 missed，门槛 85% |
+| 严格 warning + coverage 全量测试 | 通过 | **767 passed、3 skipped in 60.81s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过 | **87.56%**；3,931 statements / 489 missed，门槛 85% |
 | 文档/结构化示例 | 通过 | 29 个 Markdown、24 个内部链接、10 个 JSON/YAML 示例；workflow Action 均固定 40 位 SHA |
 | 依赖/许可证 | 通过 | `pip-audit` 无已知漏洞；GPL/AGPL deny gate 通过 |
 | `uv build --clear` | 通过 | 仅生成一个 `0.1.0b2` wheel 与一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 8.67s** |
-| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 8.48s** |
+| Python 3.12 干净 wheel | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 10.33s** |
+| Python 3.12 干净 sdist | 通过 | 解析并安装 33 个依赖，官方 stdio **7 passed in 9.58s** |
 | 制品内容策略 | 通过 | wheel 77 members、sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接或路径 |
 | Claude Code 客户端 | 通过 | 2.1.211，隔离临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 报告 `Connected`；未调用模型 API |
 | GitHub Actions | 条件通过 | CI run `29597839925`、docs run `29597840557` 及 security run `29597839864` 的代码侧检查通过；唯一失败 Dependency Review 因 Dependency Graph disabled |

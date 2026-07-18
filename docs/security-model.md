@@ -25,7 +25,7 @@ MCP validation → policy → application use case → Port
 - console endpoint 必须来自目标项目/device 的显式日志绑定，并通过 loopback TCP/Telnet/Comware prompt probe；超限日志的未读区间是状态信任边界，之后必须重新看到明确绑定。
 - `h3c_run_display` 拒绝换行、控制字符、管道、重定向、多命令和危险前缀；配置只能收紧规则。
 - 每设备独占 session，全局 session、空闲时间、命令次数、连接/命令超时均有硬上限。
-- 项目 ID、`project.json`、`.net` 与配置引用都必须 resolve 后留在项目根；元数据文件有读取字节上限。
+- 项目 ID、`project.json`、`.net` 与配置引用都必须 resolve 后留在项目根；元数据文件有读取字节上限。物理项目根先去重，不同目录的 project ID 按 Windows 大小写不敏感规则保持唯一；一个项目出现多个直接子级 `.net` 时 fail closed。
 - 所有公共字符串、日志参数、异常文本、console 捕获和最终 MCP 结果都有独立上限；生产日志还统一移除 Windows、UNC、file URI 与任意 POSIX 绝对路径，同时保留 HTTPS URL。无法与本机绝对路径可靠区分的根相对 `/...` 字符串按保守隐私策略脱敏；CR/LF、终端控制符和 Unicode 行分隔符输出为可见转义，不能注入伪日志行。
 - 配置读取强制脱敏；v0.1 的 `redact=false` 返回 `POLICY_DENIED`。
 - 审计开启时 fail closed；`retention_days` 在数据库初始化和追加事件时执行。

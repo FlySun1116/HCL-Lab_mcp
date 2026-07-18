@@ -39,8 +39,8 @@
 | 显式缺失配置 | 通过 | 退出码 1、stdout 为空、stderr 明确报错 |
 | 显式损坏配置 | 通过 | 在 MCP 协议启动前失败关闭 |
 | beta.2 wheel/sdist | 通过 | `uv build --clear` 仅生成一个 `0.1.0b2` wheel 和一个 sdist |
-| Python 3.12 干净 wheel | 通过 | 依据 wheel 元数据解析并安装 33 个依赖；官方 stdio 7 passed in 8.67s |
-| Python 3.12 干净 sdist | 通过 | 依据 sdist 元数据解析并安装 33 个依赖；官方 stdio 7 passed in 8.48s |
+| Python 3.12 干净 wheel | 通过 | 依据 wheel 元数据解析并安装 33 个依赖；官方 stdio 7 passed in 10.33s |
+| Python 3.12 干净 sdist | 通过 | 依据 sdist 元数据解析并安装 33 个依赖；官方 stdio 7 passed in 9.58s |
 | Claude Code 隔离连接 | 通过 | 2.1.211，临时 `CLAUDE_CONFIG_DIR`，`mcp list/get` 返回 `Connected`；未调用模型 API |
 | 公共 registry 安装 | 失败/未发布 | PyPI 不存在 beta.2，不能使用 `uvx h3c-hcl-mcp` |
 
@@ -113,13 +113,13 @@ beta.2 注册 15 个 Tool：
 | `uv run --locked ruff check .` | 通过 |
 | `uv run --locked ruff format --check .` | 通过：110 个文件 |
 | `uv run --locked mypy src scripts/check_distribution.py scripts/check_docs.py scripts/check_repository.py` | 通过：73 个源/脚本文件 |
-| 严格 warning + coverage 全量测试 | 通过：**758 passed、3 skipped in 59.22s**，Python 3.14.5 |
-| active-v0.1 line coverage | 通过：**87.55%**；3,904 statements / 486 missed，门槛 85% |
+| 严格 warning + coverage 全量测试 | 通过：**767 passed、3 skipped in 60.81s**，Python 3.14.5 |
+| active-v0.1 line coverage | 通过：**87.56%**；3,931 statements / 489 missed，门槛 85% |
 | 文档/示例/Action SHA | 通过：29 个 Markdown、24 个内部链接、10 个结构化示例 |
 | 依赖/许可证 | 通过：`uv pip check`、`pip-audit`、GPL/AGPL deny gate |
 | `uv build --clear` | 通过：唯一 `0.1.0b2` wheel/sdist |
-| Python 3.12 wheel stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 8.67s** |
-| Python 3.12 sdist stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 8.48s** |
+| Python 3.12 wheel stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 10.33s** |
+| Python 3.12 sdist stdio | 通过：元数据解析 33 个依赖、独立安装、**7 passed in 9.58s** |
 | 制品内容策略 | 通过：wheel 77/sdist 174 members；许可证/schema 存在，无本地 Agent 状态、凭据/专有资产、危险链接、路径穿越或超大成员 |
 | GitHub Actions | 条件通过：run `29597839925`、`29597840557`、`29597839864` 的代码侧检查通过；Dependency Review 仅因 Dependency Graph disabled 失败 |
 | `git diff --check` | 通过 |
@@ -163,6 +163,8 @@ beta.2 注册 15 个 Tool：
 35. Comware prompt 只接受独立终行并精确匹配当前只读 session；延迟分块正文中的 `<fake>`/`[fake]` 不再造成响应截断或跨命令串线。
 36. 超限 HCL 日志的未读区间会清空旧状态；tail 中必须重新出现明确项目绑定才会发布 console endpoint。
 37. 紧凑 `label:/path`、CR/LF、终端控制符和 Unicode 行分隔符均进入 human/JSON 日志安全回归。
+38. 重复物理项目根被去重；跨不同目录的同名/大小写 project ID 冲突不会重复分页或静默选择首个项目。
+39. 多个直接子级 `.net` 一律返回 `PROJECT_DAMAGED`，不再从 stale/current topology 中猜测设备 ID 和链路。
 
 # 失败项
 
@@ -349,7 +351,7 @@ beta.2 注册 15 个 Tool：
 
 修复：将 `pyyaml>=6.0.3` 加入 production dependencies。
 
-验证证据：当前候选 758 passed、3 skipped；Python 3.12.13 干净 wheel 与 sdist 的 YAML/JSON/CLI/env stdio 场景均进入 7 passed。
+验证证据：当前候选 767 passed、3 skipped；Python 3.12.13 干净 wheel 与 sdist 的 YAML/JSON/CLI/env stdio 场景均进入 7 passed。
 
 ## BUG-017
 
@@ -393,7 +395,7 @@ beta.2 注册 15 个 Tool：
 
 修复：Team Lead 运行 formatter，审查 diff，并重跑 ruff check/format、mypy、pytest、build 和 wheel/sdist clean-artifact stdio。
 
-验证证据：Ruff check/format 通过、mypy 73 个源/脚本文件通过、758 passed/3 skipped、87.55% active-v0.1 coverage、beta.2 clean build 通过，Python 3.12 wheel/sdist stdio 各 7 passed。
+验证证据：Ruff check/format 通过、mypy 73 个源/脚本文件通过、767 passed/3 skipped、87.56% active-v0.1 coverage、beta.2 clean build 通过，Python 3.12 wheel/sdist stdio 各 7 passed。
 
 ## BUG-019
 
@@ -415,7 +417,7 @@ beta.2 注册 15 个 Tool：
 
 修复：接入 restriction-only allowlist 和不区分大小写的字面 deny pattern，始终先执行不可覆盖的注入/危险规则。
 
-验证证据：策略单元测试及 758 passed/3 skipped 候选全量回归通过。
+验证证据：策略单元测试及 767 passed/3 skipped 候选全量回归通过。
 
 ## BUG-020
 
@@ -437,7 +439,7 @@ beta.2 注册 15 个 Tool：
 
 修复：transport 自身在所有失败路径 fail-closed；EOF 返回 `CONNECTION_CLOSED`，无 prompt 返回 `COMMAND_TIMEOUT`，截断连接不复用；MCP 边界移除未可信输出字段。
 
-验证证据：Telnet fake server 清理、重连、迟到输出、100 并发和错误边界测试进入 758 passed/3 skipped 全量回归。
+验证证据：Telnet fake server 清理、重连、迟到输出、100 并发和错误边界测试进入 767 passed/3 skipped 全量回归。
 
 ## BUG-021
 
@@ -459,7 +461,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展 ToolManager 边界、UTC 迁移/规范化、公共 topology DTO 脱敏，并用 `asyncio.to_thread` 隔离阻塞文件 I/O。
 
-验证证据：官方内存协议、SQLite、拓扑、全局超时和最终输出预算回归进入 758 passed/3 skipped 全量回归。
+验证证据：官方内存协议、SQLite、拓扑、全局超时和最终输出预算回归进入 767 passed/3 skipped 全量回归。
 
 ## BUG-022
 
@@ -481,7 +483,7 @@ beta.2 注册 15 个 Tool：
 
 修复：把通用 PEM/OpenSSH 规则置于具体 key 规则之前，覆盖文本结尾，并补 SNMPv3 变体规则。
 
-验证证据：脱敏聚焦测试及 758 passed/3 skipped 候选全量回归通过。
+验证证据：脱敏聚焦测试及 767 passed/3 skipped 候选全量回归通过。
 
 ## BUG-023
 
@@ -503,7 +505,7 @@ beta.2 注册 15 个 Tool：
 
 修复：新增 ping/traceroute parser，限制 ping count 1～100、tracert max hops 1～255，并拒绝重复/未知/不安全参数。
 
-验证证据：诊断 parser 测试、六个 H3C read Tool synthetic/fake 正向链路及 758 passed/3 skipped 全量回归通过。
+验证证据：诊断 parser 测试、六个 H3C read Tool synthetic/fake 正向链路及 767 passed/3 skipped 全量回归通过。
 
 ## BUG-024
 
@@ -525,7 +527,7 @@ beta.2 注册 15 个 Tool：
 
 修复：使用线程桥接同步发现；限制 16 个日志文件和每文件 4 MiB；补齐连接、扫描器和 writer 清理。
 
-验证证据：100 个同设备 fake-console 并发请求无串线；严格 warning 模式下 758 passed/3 skipped。
+验证证据：100 个同设备 fake-console 并发请求无串线；严格 warning 模式下 767 passed/3 skipped。
 
 ## BUG-025
 
@@ -547,7 +549,7 @@ beta.2 注册 15 个 Tool：
 
 修复：新增 final-result budget middleware、紧凑 JSON、受限错误 payload，并把预算放在审计边界内。
 
-验证证据：output-budget 单元/集成测试覆盖成功、错误、未知、Schema 和超时；758 passed/3 skipped 全量回归。
+验证证据：output-budget 单元/集成测试覆盖成功、错误、未知、Schema 和超时；767 passed/3 skipped 全量回归。
 
 ## BUG-026
 
@@ -569,7 +571,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展顺序敏感的凭据规则，并为完整/快速路径增加对称回归。
 
-验证证据：脱敏聚焦测试和 758 passed/3 skipped 全量回归通过。
+验证证据：脱敏聚焦测试和 767 passed/3 skipped 全量回归通过。
 
 ## BUG-027
 
@@ -591,7 +593,7 @@ beta.2 注册 15 个 Tool：
 
 修复：增加有界 cursor 参数并向下传递。
 
-验证证据：project-list 分页集成测试及 758 passed/3 skipped 全量回归通过。
+验证证据：project-list 分页集成测试及 767 passed/3 skipped 全量回归通过。
 
 ## BUG-028
 
@@ -607,7 +609,7 @@ beta.2 注册 15 个 Tool：
 
 预期：完整测试套件进入 active-v0.1 coverage；wheel/sdist 各自独立安装并运行同一 stdio 黑盒套件。
 
-实际：coverage 为 87.55%；两个制品均在 Python 3.12.13 独立环境依据各自包元数据解析 33 个依赖，通过版本、entry point 和 7 个 stdio 场景。
+实际：coverage 为 87.56%；两个制品均在 Python 3.12.13 独立环境依据各自包元数据解析 33 个依赖，通过版本、entry point 和 7 个 stdio 场景。
 
 根因：早期 package smoke 只证明源码模块和 wheel 的部分路径可运行。
 
@@ -723,7 +725,7 @@ beta.2 注册 15 个 Tool：
 
 修复：扩展顺序敏感的凭据模式，并增加完整/快速路径对称测试。
 
-验证证据：新增语法聚焦测试及 758 passed/3 skipped 全量回归通过。
+验证证据：新增语法聚焦测试及 767 passed/3 skipped 全量回归通过。
 
 ## BUG-034
 
@@ -745,7 +747,7 @@ beta.2 注册 15 个 Tool：
 
 修复：增加 endpoint 验证、增量 IAC 状态机、连接 reservation、会话计数/时间戳和 lifespan 清理。
 
-验证证据：console/session/server 聚焦测试及 758 passed/3 skipped 严格 warning 全量回归通过。
+验证证据：console/session/server 聚焦测试及 767 passed/3 skipped 严格 warning 全量回归通过。
 
 ## BUG-035
 
@@ -767,7 +769,7 @@ beta.2 注册 15 个 Tool：
 
 修复：审计路径 fail closed；统一有界字段并在 logging adapter 截断客户端值。
 
-验证证据：审计失败、Schema 上限、输出预算和日志截断测试及 758 passed/3 skipped 全量回归通过。
+验证证据：审计失败、Schema 上限、输出预算和日志截断测试及 767 passed/3 skipped 全量回归通过。
 
 ## BUG-036
 
@@ -789,7 +791,7 @@ beta.2 注册 15 个 Tool：
 
 修复：通过受控动态属性读取 Windows registry API 并处理 `KeyError`；按 gitleaks-action v3 官方说明给扫描步骤传入仓库 `GITHUB_TOKEN`。
 
-验证证据：历史默认和 `--platform linux` mypy 均通过；当前默认 mypy 73 个源/脚本文件、758 passed/3 skipped 严格 warning 回归通过，旧远端 CI 六项全绿。
+验证证据：历史默认和 `--platform linux` mypy 均通过；当前默认 mypy 73 个源/脚本文件、767 passed/3 skipped 严格 warning 回归通过，旧远端 CI 六项全绿。
 
 ## BUG-037
 
@@ -953,7 +955,7 @@ beta.2 注册 15 个 Tool：
 
 建议：保持路径脱敏为 logging adapter 的强制边界；新增 logger 时不得绕过统一 handler 或拼接原始异常。
 
-验证证据：真实官方 stdio Client 重启后 stderr 不含审计库路径；human/JSON、PathLike、异常、`/etc`、`/usr/local`、任意根目录、file URI、UNC、诊断后缀及 URL 回归进入 758 passed/3 skipped 全量测试。
+验证证据：真实官方 stdio Client 重启后 stderr 不含审计库路径；human/JSON、PathLike、异常、`/etc`、`/usr/local`、任意根目录、file URI、UNC、诊断后缀及 URL 回归进入 767 passed/3 skipped 全量测试。
 
 ## BUG-046
 
@@ -1015,6 +1017,46 @@ beta.2 注册 15 个 Tool：
 
 验证证据：human/JSON 聚焦回归通过，并进入全量测试。
 
+## BUG-049
+
+编号：BUG-049
+
+级别：P1
+
+状态：VERIFIED
+
+问题：多个 projects root 含相同 project ID 时，列表曾重复返回第一个 root 的项目，分页可连续两页出现同一对象，直接查询也静默采用首项。
+
+复现步骤：在两个合成 root 各创建 `shared_lab`，写入不同项目名称；调用 list、limit=1 分页、get_project 和 get_topology。
+
+预期：同一物理 root 的重复配置应去重；不同物理目录的 ID 冲突不得由配置顺序决定目标。
+
+实际：项目根按 `normcase(realpath(abspath))` 去重；扫描按 `project_id.casefold()` 建立唯一身份索引，冲突项目不进入列表，get/topology 返回现有 `PROJECT_DAMAGED` 且不暴露路径。
+
+建议：公共 project ID 在所有配置 root 中永久保持唯一；未来若需要显式 root 选择，必须另做公共契约设计，不能恢复首项获胜。
+
+验证证据：重复 root、跨 root 同 ID、大小写冲突、分页和 list/get/topology 一致性测试通过，并进入全量测试。
+
+## BUG-050
+
+编号：BUG-050
+
+级别：P1
+
+状态：VERIFIED
+
+问题：项目目录存在多个 `.net` 时，旧实现直接使用 `os.scandir()` 首项；陈旧拓扑可提供错误 device ID/链路，随后与当前 runtime endpoint 发生目标混淆。
+
+复现步骤：同一合成项目写入 `old.net` 与 `new.net`，分别描述不同设备 ID/链路，再调用 get_project 版本回退和 get_topology。
+
+预期：没有权威字段证明哪个 topology 当前有效时必须 fail closed，不得依据枚举顺序、mtime 或内容相似度猜测。
+
+实际：0 个 `.net` 保持兼容警告，1 个正常解析，2 个及以上统一返回 `PROJECT_DAMAGED`；错误只含候选数量，不含文件名或本机路径。
+
+建议：备份 `.net` 应移出 HCL 项目目录；若未来 HCL 正式格式提供权威 topology 引用，再通过 fixture/ADR 扩展选择规则。
+
+验证证据：大小写扩展名单文件、多文件隐私、get_project 版本回退和 get_topology fail-closed 回归通过，并进入全量测试。
+
 # 优化建议
 
 1. 把 Python 3.12 wheel/sdist clean-artifact + 官方 stdio 7 场景设为 Windows CI required check。
@@ -1029,12 +1071,12 @@ beta.2 注册 15 个 Tool：
 | 优先级 | 活跃项 | 发布要求 |
 |---|---|---|
 | P0 | BUG-001、BUG-017 | 真实命令成功并完成公开发布授权后才能宣布外部可安装；发布动作本身需维护者确认 |
-| P1 | BUG-029、BUG-030、BUG-039、BUG-044（外部/远端门禁） | Dependency Graph 启用后仍需客户端证据、`main` 保护、私密报告和受保护发布环境；BUG-045～048 已验证 |
+| P1 | BUG-029、BUG-030、BUG-039、BUG-044（外部/远端门禁） | Dependency Graph 启用后仍需客户端证据、`main` 保护、私密报告和受保护发布环境；BUG-045～050 已验证 |
 | P2 | BUG-005、BUG-043 | Tool alias 与 `additionalProperties` 都是公共契约决策，不夹带修改 |
 
 # 交给开发 Agent 的修复清单
 
-1. **无待修复的 P1 本地代码缺陷**：BUG-018～028、BUG-031～042、BUG-045～048 已在当前候选验证；远端仅 Dependency Review 等待仓库 Dependency Graph。
+1. **无待修复的 P1 本地代码缺陷**：BUG-018～028、BUG-031～042、BUG-045～050 已在当前候选验证；远端仅 Dependency Review 等待仓库 Dependency Graph。
 2. **真实 HCL 正向测试**：等待维护者启动设备，只执行两条 display 命令并记录脱敏结果。
 3. **发布决策**：候选分支和 Draft PR #4 已通过 CI；merge/tag/Release/PyPI 仍需维护者明确授权。
 4. **真实客户端与仓库治理**：按 BUG-029/030/044 补齐 Claude Desktop、Cursor、Dependency Graph、`main` 保护、私密报告和受保护发布环境。

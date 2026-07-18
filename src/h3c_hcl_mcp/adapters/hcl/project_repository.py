@@ -296,17 +296,31 @@ def _normalize_project_json(
 def _find_net_file(project_dir: str) -> str | None:
     """Find the .net topology file in a project directory.
 
+    A project has no trustworthy way to identify one candidate among multiple
+    direct-child ``.net`` files.  Selecting the first directory entry can bind
+    stale device IDs to a current console endpoint, so ambiguity fails closed.
+
     Returns the absolute path to the .net file, or None if not found.
     """
     _validate_project_path(project_dir)
 
     try:
+        candidates: list[str] = []
         with os.scandir(project_dir) as entries:
             for entry in entries:
-                if entry.is_file() and entry.name.endswith(".net"):
-                    return _resolve_project_reference(project_dir, entry.name, label=".net topology")
+                if entry.is_file() and entry.name.casefold().endswith(".net"):
+                    candidates.append(entry.name)
     except OSError:
-        pass
+        return None
+
+    if len(candidates) > 1:
+        raise DomainError(
+            code=ErrorCode.PROJECT_DAMAGED,
+            message="Multiple .net topology files found",
+            details={"file": ".net topology", "candidate_count": len(candidates)},
+        )
+    if candidates:
+        return _resolve_project_reference(project_dir, candidates[0], label=".net topology")
 
     return None
 
@@ -320,9 +334,8 @@ def _get_file_mtime(file_path: str) -> datetime | None:
         return None
 
 
-def _read_net_version(project_dir: str) -> str | None:
-    """Read the public HCL version header without parsing the full topology."""
-    net_file = _find_net_file(project_dir)
+def _read_net_version(net_file: str | None) -> str | None:
+    """Read the public HCL version header from an already selected topology."""
     if net_file is None:
         return None
     _validate_net_file_size(net_file)
@@ -351,7 +364,10 @@ class HCLProjectRepository(ProjectRepository):
     """
 
     def __init__(self, projects_dirs: list[str] | None = None) -> None:
-        self._projects_dirs: list[str] = projects_dirs or []
+        self._projects_dirs: list[str] = []
+        self._project_root_keys: set[str] = set()
+        for directory in projects_dirs or []:
+            self.add_projects_dir(directory)
 
     @property
     def projects_dirs(self) -> list[str]:
@@ -360,8 +376,81 @@ class HCLProjectRepository(ProjectRepository):
     def add_projects_dir(self, directory: str) -> None:
         """Add a directory to scan for HCL projects."""
         _validate_project_path(directory)
-        if directory not in self._projects_dirs:
-            self._projects_dirs.append(directory)
+        root_key = os.path.normcase(os.path.realpath(os.path.abspath(directory)))
+        if root_key in self._project_root_keys:
+            return
+        self._project_root_keys.add(root_key)
+        self._projects_dirs.append(directory)
+
+    def _scan_project_candidates(self) -> dict[str, dict[str, tuple[str, str]]]:
+        """Index project IDs without allowing one configured root to shadow another.
+
+        The outer key is a case-insensitive project identity, matching Windows
+        filesystem semantics.  The inner key is the canonical physical path so
+        duplicate root aliases do not create false ambiguity.
+        """
+        candidates: dict[str, dict[str, tuple[str, str]]] = {}
+        for projects_dir in self._projects_dirs:
+            _validate_project_path(projects_dir)
+            if not os.path.isdir(projects_dir):
+                continue
+            try:
+                with os.scandir(projects_dir) as entries:
+                    for entry in entries:
+                        if not entry.is_dir():
+                            continue
+                        try:
+                            _validate_project_id(entry.name)
+                            project_dir = _resolve_project_dir(projects_dir, entry.name)
+                        except DomainError:
+                            continue
+                        if not os.path.isdir(project_dir):
+                            continue
+                        physical_key = os.path.normcase(os.path.realpath(os.path.abspath(project_dir)))
+                        candidates.setdefault(ntpath.normcase(entry.name), {}).setdefault(
+                            physical_key,
+                            (entry.name, project_dir),
+                        )
+            except OSError:
+                continue
+        return candidates
+
+    @staticmethod
+    def _ambiguous_project_error(project_id: str, candidate_count: int) -> DomainError:
+        return DomainError(
+            code=ErrorCode.PROJECT_DAMAGED,
+            message="Project identifier is ambiguous across configured roots",
+            details={"project_id": project_id, "candidate_count": candidate_count},
+        )
+
+    @staticmethod
+    def _load_project_at(project_id: str, project_dir: str) -> LabProject:
+        data = _read_project_json(project_dir)
+        if data.get("id", "") != project_id:
+            raise DomainError(
+                code=ErrorCode.PROJECT_NOT_FOUND,
+                message=f"Project not found: {project_id!r}",
+                details={"project_id": project_id},
+            )
+
+        # Validate topology identity even when project.json already carries a
+        # version.  Otherwise the same damaged project can appear healthy in
+        # list/get while topology access rejects it later.
+        net_file = _find_net_file(project_dir)
+        name = str(data.get("name", project_id))
+        hcl_version_raw = data.get("version")
+        hcl_version = str(hcl_version_raw or "").strip() or _read_net_version(net_file)
+        devices = data.get("devices", [])
+        device_count = len(devices) if isinstance(devices, list) else 0
+        updated_at = _get_file_mtime(os.path.join(project_dir, "project.json"))
+        return LabProject(
+            project_id=project_id,
+            name=name,
+            path=project_dir,
+            hcl_version=hcl_version,
+            device_count=device_count,
+            updated_at=updated_at,
+        )
 
     async def list_projects(
         self,
@@ -383,27 +472,15 @@ class HCLProjectRepository(ProjectRepository):
     ) -> tuple[list[LabProject], str | None]:
         """Blocking project scan executed outside the MCP event loop."""
         all_projects: list[LabProject] = []
-
-        for projects_dir in self._projects_dirs:
-            _validate_project_path(projects_dir)
-
-            if not os.path.isdir(projects_dir):
+        for physical_candidates in self._scan_project_candidates().values():
+            if len(physical_candidates) != 1:
+                logger.debug("Skipping ambiguous project identifier")
                 continue
-
+            project_id, project_dir = next(iter(physical_candidates.values()))
             try:
-                with os.scandir(projects_dir) as entries:
-                    for entry in entries:
-                        if not entry.is_dir():
-                            continue
-
-                        try:
-                            project = self._get_project_sync(entry.name)
-                            all_projects.append(project)
-                        except DomainError as e:
-                            # Collect skipped project info for diagnostics
-                            logger.debug("Skipping unreadable project entry: %s", e.code.value)
-                            continue
-            except OSError:
+                all_projects.append(self._load_project_at(project_id, project_dir))
+            except DomainError as error:
+                logger.debug("Skipping unreadable project entry: %s", error.code.value)
                 continue
 
         # Apply query filter
@@ -416,7 +493,7 @@ class HCLProjectRepository(ProjectRepository):
             ]
 
         # Sort by name for stable output
-        all_projects.sort(key=lambda p: p.name)
+        all_projects.sort(key=lambda p: (p.name.casefold(), p.project_id.casefold()))
 
         # Apply cursor-based pagination
         total = len(all_projects)
@@ -443,42 +520,13 @@ class HCLProjectRepository(ProjectRepository):
     def _get_project_sync(self, project_id: str) -> LabProject:
         """Blocking project lookup executed outside the MCP event loop."""
         _validate_project_id(project_id)
-        for projects_dir in self._projects_dirs:
-            _validate_project_path(projects_dir)
-            project_dir = _resolve_project_dir(projects_dir, project_id)
-
-            if not os.path.isdir(project_dir):
-                continue
-
-            try:
-                data = _read_project_json(project_dir)
-            except DomainError as e:
-                if e.code == ErrorCode.PROJECT_NOT_FOUND:
-                    continue
-                raise
-
-            # Verify the project.json id matches the directory
-            json_id = data.get("id", "")
-            if json_id != project_id:
-                continue
-
-            name = str(data.get("name", project_id))
-            hcl_version_raw = data.get("version")
-            hcl_version = str(hcl_version_raw or "").strip() or _read_net_version(project_dir)
-            devices = data.get("devices", [])
-            device_count = len(devices) if isinstance(devices, list) else 0
-
-            json_path = os.path.join(project_dir, "project.json")
-            updated_at = _get_file_mtime(json_path)
-
-            return LabProject(
-                project_id=project_id,
-                name=name,
-                path=project_dir,
-                hcl_version=hcl_version,
-                device_count=device_count,
-                updated_at=updated_at,
-            )
+        physical_candidates = self._scan_project_candidates().get(ntpath.normcase(project_id), {})
+        if len(physical_candidates) > 1:
+            raise self._ambiguous_project_error(project_id, len(physical_candidates))
+        if physical_candidates:
+            actual_id, project_dir = next(iter(physical_candidates.values()))
+            if actual_id == project_id:
+                return self._load_project_at(project_id, project_dir)
 
         raise DomainError(
             code=ErrorCode.PROJECT_NOT_FOUND,

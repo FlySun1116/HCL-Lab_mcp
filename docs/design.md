@@ -476,6 +476,8 @@ MCP 当前标准传输是 `stdio` 和 Streamable HTTP。`stdio` 用于由 Claude
 5. 项目响应不向 MCP Client 返回服务器绝对路径；路径相关异常在 MCP 边界再次脱敏。
 6. 文件采用短时只读打开，不长期持有 HCL 可能正在写入的句柄；阻塞式扫描/解析通过 worker thread 执行，不占用 stdio event loop。
 7. `config_path` 只保留在内部领域对象，不进入公开 topology DTO；项目路径、设备 buffer 和其他未可信输出也不得进入错误详情。
+8. 配置的项目根按规范化物理路径去重；不同物理目录中的 project ID 按 Windows 大小写不敏感语义必须唯一，冲突项目不进入列表，直接查询以 `PROJECT_DAMAGED` fail closed。
+9. 项目目录只能有一个直接子级 `.net` topology；没有权威元数据能在多个候选中证明新旧关系，因此不得按枚举顺序、mtime 或设备相似度猜测选择。
 
 `.net` 解析器必须实现确定性语法或使用安全的 ConfigObj 解析库；禁止对端口字典等字段使用 Python `eval`。测试夹具全部由项目自行构造。
 

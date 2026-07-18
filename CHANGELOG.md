@@ -65,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made the Windows registry lookup type-safe under both Windows and Linux mypy platforms.
 - Passed the repository `GITHUB_TOKEN` to gitleaks-action v3 so the pinned secret-scan job can run on pull requests.
 - Bounded `project.json` and `.net` reads, rejected unsafe referenced paths and symlink/junction escapes, and kept all resulting errors free of absolute host paths.
+- Deduplicated physical project roots and rejected case-insensitive project-ID collisions across different directories instead of silently selecting or listing the first project twice.
+- Rejected projects containing multiple direct-child `.net` files instead of using nondeterministic directory enumeration to choose potentially stale device IDs and links.
 - Replaced archive extension denylists with explicit wheel/sdist member allowlists and added a tracked-repository policy for secrets, proprietary assets, links, case collisions, and oversized files.
 - Restricted v0.1 transport configuration to exactly `console_telnet`; SSH remains a v0.2 capability rather than an accepted but unusable setting.
 - Enforced `audit.retention_days` in SQLite initialization/appends and bounded/redacted human and JSON exception logging.
@@ -83,8 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verification status
 
-- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **758 passed, 3 skipped in 59.22s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
-- Active-v0.1 line coverage is **87.55%** (3,904 statements, 486 missed), above the 85% hard gate.
+- Final local-candidate gates pass: Ruff check/format over 110 files, mypy over 73 source/script files, and **767 passed, 3 skipped in 60.81s** on Python 3.14.5 with ResourceWarning/PytestUnraisable failures treated as errors.
+- Active-v0.1 line coverage is **87.56%** (3,931 statements, 489 missed), above the 85% hard gate.
 - [Draft PR #4](https://github.com/FlySun1116/HCL-Lab_mcp/pull/4) remains the integration target. Latest CI, documentation, artifact security, license, secret-scan, and CodeQL checks pass; only Dependency Review fails because the repository Dependency Graph setting is disabled. The repository also has no protection rule on `main`, so successful checks are not yet enforced as required checks.
 - `uv build --clear` produces one `0.1.0b2` wheel and one sdist. Each artifact installs in a separate clean Python 3.12.13 environment, exposes `h3c-hcl-mcp --version`, and passes all **7 official stdio tests** through the installed executable.
 - Distribution policy passes with 77 wheel members and 174 sdist members; both contain LICENSE, NOTICE, and the audit schema, and neither contains local Agent state or unsafe members. Final tag checksums are generated as external release assets instead of being embedded into the self-referential source archive.

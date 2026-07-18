@@ -203,6 +203,29 @@ class TestFindNetFile:
         result = _find_net_file(str(empty_lab_dir))
         assert result is None
 
+    def test_uppercase_net_extension_is_supported(self, tmp_path: Path):
+        project_dir = tmp_path / "uppercase_net"
+        project_dir.mkdir()
+        topology = project_dir / "topology.NET"
+        topology.write_text("version = 5.10.3", encoding="utf-8")
+
+        assert _find_net_file(str(project_dir)) == str(topology)
+
+    def test_multiple_net_files_fail_closed_without_exposing_names(self, tmp_path: Path):
+        project_dir = tmp_path / "ambiguous_net"
+        project_dir.mkdir()
+        (project_dir / "stale.net").write_text("version = 5.10.2", encoding="utf-8")
+        (project_dir / "current.net").write_text("version = 5.10.3", encoding="utf-8")
+
+        with pytest.raises(DomainError) as caught:
+            _find_net_file(str(project_dir))
+
+        assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+        assert caught.value.details == {"file": ".net topology", "candidate_count": 2}
+        assert str(tmp_path) not in str(caught.value)
+        assert "stale.net" not in str(caught.value)
+        assert "current.net" not in str(caught.value)
+
     def test_traversal_rejected(self):
         with pytest.raises(DomainError) as exc:
             _find_net_file("../etc")
@@ -365,6 +388,149 @@ class TestHCLProjectRepository:
         before = len(repo.projects_dirs)
         repo.add_projects_dir(str(synthetic_projects_dir))
         assert len(repo.projects_dirs) == before
+
+    @pytest.mark.asyncio
+    async def test_constructor_deduplicates_physical_project_roots(self, tmp_path: Path):
+        project_dir = tmp_path / "unique_lab"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps({"id": "unique_lab", "name": "Unique", "version": "5.10.3", "devices": []}),
+            encoding="utf-8",
+        )
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path), str(tmp_path)])
+
+        projects, cursor = await repo.list_projects()
+
+        assert repo.projects_dirs == [str(tmp_path)]
+        assert [project.project_id for project in projects] == ["unique_lab"]
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_duplicate_project_id_across_roots_fails_closed(self, tmp_path: Path):
+        roots = [tmp_path / "root_a", tmp_path / "root_b"]
+        for index, root in enumerate(roots, start=1):
+            project_dir = root / "shared_lab"
+            project_dir.mkdir(parents=True)
+            (project_dir / "project.json").write_text(
+                json.dumps(
+                    {
+                        "id": "shared_lab",
+                        "name": f"Conflicting Lab {index}",
+                        "version": "5.10.3",
+                        "devices": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(root) for root in roots])
+
+        projects, cursor = await repo.list_projects()
+
+        assert projects == []
+        assert cursor is None
+        for lookup in (repo.get_project, repo.get_topology):
+            with pytest.raises(DomainError) as caught:
+                await lookup("shared_lab")
+            assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+            assert caught.value.details == {"project_id": "shared_lab", "candidate_count": 2}
+            assert str(tmp_path) not in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_project_id_collision_fails_closed(self, tmp_path: Path):
+        roots = [tmp_path / "root_a", tmp_path / "root_b"]
+        project_ids = ["CaseLab", "caselab"]
+        for root, project_id in zip(roots, project_ids, strict=True):
+            project_dir = root / project_id
+            project_dir.mkdir(parents=True)
+            (project_dir / "project.json").write_text(
+                json.dumps({"id": project_id, "name": project_id, "version": "5.10.3", "devices": []}),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(root) for root in roots])
+
+        projects, _ = await repo.list_projects()
+
+        assert projects == []
+        with pytest.raises(DomainError) as caught:
+            await repo.get_project("CaseLab")
+        assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+
+    @pytest.mark.asyncio
+    async def test_unicode_ids_not_merged_beyond_windows_case_rules(self, tmp_path: Path):
+        roots = [tmp_path / "root_a", tmp_path / "root_b"]
+        project_ids = ["Straße", "STRASSE"]
+        for root, project_id in zip(roots, project_ids, strict=True):
+            project_dir = root / project_id
+            project_dir.mkdir(parents=True)
+            (project_dir / "project.json").write_text(
+                json.dumps({"id": project_id, "name": project_id, "version": "5.10.3", "devices": []}),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(root) for root in roots])
+
+        projects, _ = await repo.list_projects()
+
+        assert {project.project_id for project in projects} == set(project_ids)
+        for project_id in project_ids:
+            assert (await repo.get_project(project_id)).project_id == project_id
+
+    @pytest.mark.asyncio
+    async def test_duplicate_root_pagination_never_repeats_projects(self, tmp_path: Path):
+        for project_id in ("lab_a", "lab_b"):
+            project_dir = tmp_path / project_id
+            project_dir.mkdir()
+            (project_dir / "project.json").write_text(
+                json.dumps({"id": project_id, "name": project_id, "version": "5.10.3", "devices": []}),
+                encoding="utf-8",
+            )
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path), str(tmp_path)])
+
+        first, cursor = await repo.list_projects(limit=1)
+        second, final_cursor = await repo.list_projects(limit=1, cursor=cursor)
+
+        assert cursor == "1"
+        assert final_cursor is None
+        assert first[0].project_id != second[0].project_id
+
+    @pytest.mark.asyncio
+    async def test_all_project_reads_reject_multiple_net_files(self, tmp_path: Path):
+        project_dir = tmp_path / "multi_net_lab"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps({"id": "multi_net_lab", "name": "Multi Net", "version": "5.10.3", "devices": []}),
+            encoding="utf-8",
+        )
+        (project_dir / "old.net").write_text("version = 5.10.2", encoding="utf-8")
+        (project_dir / "new.net").write_text("version = 5.10.3", encoding="utf-8")
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path)])
+
+        projects, cursor = await repo.list_projects()
+
+        assert projects == []
+        assert cursor is None
+        for lookup in (repo.get_project, repo.get_topology):
+            with pytest.raises(DomainError) as caught:
+                await lookup("multi_net_lab")
+            assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+            assert caught.value.details == {"file": ".net topology", "candidate_count": 2}
+
+    @pytest.mark.asyncio
+    async def test_get_project_version_fallback_rejects_multiple_net_files(self, tmp_path: Path):
+        project_dir = tmp_path / "multi_net_version_lab"
+        project_dir.mkdir()
+        (project_dir / "project.json").write_text(
+            json.dumps({"id": project_dir.name, "name": "Multi Net Version", "devices": []}),
+            encoding="utf-8",
+        )
+        (project_dir / "old.net").write_text("version = 5.10.2", encoding="utf-8")
+        (project_dir / "new.net").write_text("version = 5.10.3", encoding="utf-8")
+        repo = HCLProjectRepository(projects_dirs=[str(tmp_path)])
+
+        with pytest.raises(DomainError) as caught:
+            await repo.get_project(project_dir.name)
+
+        assert caught.value.code == ErrorCode.PROJECT_DAMAGED
+        assert caught.value.details == {"file": ".net topology", "candidate_count": 2}
 
     @pytest.mark.asyncio
     async def test_add_projects_dir_traversal_rejected(self, repo: HCLProjectRepository):
